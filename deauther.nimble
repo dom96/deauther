@@ -7,6 +7,8 @@ license       = "MIT"
 srcDir        = "src"
 bin           = @["deauther"]
 
+skipExt = @["nim"]
+
 # Dependencies
 
 requires "nim >= 0.18.0"
