@@ -13,20 +13,18 @@ proc getPacket(pcap: pcap_t) =
     echo("Timed out")
   of 1:
     assert buffer != nil
-    echo("Data received")
-    let radiotap = parseRadiotapHeader(buffer)
-    echo(radiotap.version, " ", radiotap.len, " ", radiotap.present)
-    if radiotap.len >= packet.caplen:
-      return
-
     # Copy data buffer.
     var data = newString(packet.caplen)
-    copyMem(addr data[0], addr buffer, data.len)
+    copyMem(addr data[0], buffer, data.len)
+    echo @[data]
 
-    data = data[radiotap.len .. ^1] # Skip the radiotap header.
-    echo toHex(data)
+    echo("Data received")
+    let radiotap = parseRadiotap(data)
+    echo(radiotap)
+    if radiotap.header.len >= packet.caplen:
+      return
 
-    let ieee802packet = parsePacket(data)
+    let ieee802packet = parsePacket(radiotap.data)
     echo(ieee802packet)
   else:
     pcap.checkError(ret)

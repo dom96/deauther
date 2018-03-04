@@ -21,7 +21,8 @@ type
     header*: MacHeader
     body*: string
 
-proc parsePacket*(data: var string): Packet =
+proc parsePacket*(data: string): Packet =
+  var data = data
   assert data.len > sizeof MacHeader, "Got packet of size " & $data.len
   var macHeader: MacHeader
   copyMem(addr macHeader, addr data[0], sizeof MacHeader)
