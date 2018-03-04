@@ -1,3 +1,5 @@
+import strutils, os
+
 import pcap/wrapper
 
 import radiotap, packet
@@ -12,19 +14,20 @@ proc getPacket(pcap: pcap_t) =
   of 1:
     assert buffer != nil
     echo("Data received")
-    let header = parseRadiotapHeader(buffer)
-    echo(header.version, " ", header.len, " ", header.present)
-    if header.len >= packet.caplen:
+    let radiotap = parseRadiotapHeader(buffer)
+    echo(radiotap.version, " ", radiotap.len, " ", radiotap.present)
+    if radiotap.len >= packet.caplen:
       return
 
     # Copy data buffer.
     var data = newString(packet.caplen)
     copyMem(addr data[0], addr buffer, data.len)
-    data = data[header.len .. ^1] # Skip the radiotap header.
-    echo data.len
+
+    data = data[radiotap.len .. ^1] # Skip the radiotap header.
+    echo toHex(data)
+
     let ieee802packet = parsePacket(data)
     echo(ieee802packet)
-    echo "ecas"
   else:
     pcap.checkError(ret)
 
