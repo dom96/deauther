@@ -26,6 +26,7 @@ proc getPacket(pcap: pcap_t) =
 
     let ieee802packet = parsePacket(radiotap.data)
     echo(ieee802packet)
+    assert ieee802packet.calculatedFCS == ieee802packet.getFCS
   else:
     pcap.checkError(ret)
 

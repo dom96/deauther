@@ -6,6 +6,9 @@
 ##
 ## Also this: https://en.wikipedia.org/wiki/IEEE_802.11#Layer_2_%E2%80%93_Datagrams
 import strformat, strutils
+
+import crc32
+
 type
   FrameControl* = distinct uint16
 
@@ -20,6 +23,7 @@ type
   Packet* = object
     header*: MacHeader
     body*: string
+    calculatedFCS*: Crc32
 
 proc parsePacket*(data: string): Packet =
   var data = data
@@ -30,7 +34,11 @@ proc parsePacket*(data: string): Packet =
   copyMem(addr body[0],
           addr data[sizeof MacHeader],
           body.len)
-  return Packet(header: macHeader, body: body)
+  return Packet(
+    header: macHeader,
+    body: body,
+    calculatedFCS: crc32(data[0 ..< ^4])
+  )
 
 proc `$`*(mac: MACAddress): string =
   let m = array[6, uint8](mac)
@@ -45,3 +53,9 @@ proc `$`*(fc: FrameControl): string =
   let st = (f and 0b0000_1111_0000_0000) shr 8
   return fmt("(version: {version.toBin(2)}, type: {typ.toBin(2)}, " &
              "subtype: {st.toBin(4)}, ... {f:b})")
+
+proc getFCS*(packet: Packet): Crc32 =
+  if packet.body.len < 4: return 0.Crc32
+
+  var fcs = packet.body[^4 .. ^1]
+  result = cast[ptr uint32](addr fcs[0])[]
