@@ -27,7 +27,9 @@ type
 
 proc parsePacket*(data: string): Packet =
   var data = data
-  assert data.len > sizeof MacHeader, "Got packet of size " & $data.len
+  if data.len < sizeof MacHeader:
+    raise newException(ValueError, "Got packet of size " & $data.len)
+
   var macHeader: MacHeader
   copyMem(addr macHeader, addr data[0], sizeof MacHeader)
   var body = newString(data.len - sizeof MacHeader)

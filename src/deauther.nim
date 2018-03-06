@@ -16,17 +16,15 @@ proc getPacket(pcap: pcap_t) =
     # Copy data buffer.
     var data = newString(packet.caplen)
     copyMem(addr data[0], buffer, data.len)
-    echo @[data]
 
-    echo("Data received")
     let radiotap = parseRadiotap(data)
-    echo(radiotap)
     if radiotap.header.len >= packet.caplen:
       return
 
     let ieee802packet = parsePacket(radiotap.data)
-    echo(ieee802packet)
-    assert ieee802packet.calculatedFCS == ieee802packet.getFCS
+    echo(ieee802packet.header)
+    if ieee802packet.calculatedFCS != ieee802packet.getFCS:
+      echo("  Packet CRC doesn't match")
   else:
     pcap.checkError(ret)
 
@@ -36,7 +34,12 @@ when isMainModule:
 
   if not p.isNil():
     p.checkError p.pcap_set_datalink(DLT_IEEE802_11_RADIO)
-    getPacket(p)
+    while true:
+      try:
+        getPacket(p)
+      except ValueError as exc:
+        echo("Failed ", exc.msg)
 
+      sleep(500)
   else:
     echo "Could not open pcap"
