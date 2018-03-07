@@ -20,7 +20,18 @@ type
     antennaSignal*: uint8
     antennaNoise*: uint8
     antenna*: uint8
+    xchannel*: tuple[flags: uint32, freq: uint16, channel, maxPower: uint8]
+    mpdu*: tuple[refNumber: uint32, flags: uint16, crc, reserver: uint8]
+    vht*: VHT
     data*: string ## The non-radiotap data.
+
+  VHT* = object
+    known*: uint16
+    flags*, bandwidth*: uint8
+    mcsNss*: array[4, uint8]
+    coding*: uint8
+    groupId*: uint8
+    partialAid*: uint16
 
 proc parseRadiotapHeader*(packet: string): RadiotapHeader {.inline.} =
   var p = packet
@@ -82,6 +93,29 @@ proc parseRadiotap*(packet: string): Radiotap =
         # Antenna index
         copyMem(addr result.antenna, addr p[offset], 1)
         offset.inc(1)
+      of 18:
+        # XChannel
+        # http://www.radiotap.org/fields/XChannel.html
+        littleEndian64(addr result.xchannel, addr p[offset])
+        offset.inc(8)
+      of 20:
+        # A-MPDU
+        # http://www.radiotap.org/fields/A-MPDU%20status.html
+        littleEndian64(addr result.mpdu, addr p[offset])
+        offset.inc(8)
+      of 21:
+        # VHT
+        # http://www.radiotap.org/fields/VHT.html
+        littleEndian16(addr result.vht.known, addr p[offset])
+        offset.inc(2)
+        littleEndian16(addr result.vht.flags, addr p[offset])
+        offset.inc(2)
+        littleEndian32(addr result.vht.mcsNss, addr p[offset])
+        offset.inc(4)
+        littleEndian16(addr result.vht.coding, addr p[offset])
+        offset.inc(2)
+        littleEndian16(addr result.vht.partialAid, addr p[offset])
+        offset.inc(2)
       else:
         echo("Unknown ", i)
 
