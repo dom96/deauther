@@ -22,6 +22,7 @@ type
     durationID*: uint16
     address1*, address2*, address3*: MACAddress
     sequenceControl*: uint16
+    htControl*: uint16
 
   Packet* = object
     header*: MacHeader
@@ -71,6 +72,12 @@ proc getDataSubtype*(fc: FrameControl): DataSubtype =
   let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
   return DataSubtype(st)
 
+proc getOrder*(fc: FrameControl): bool =
+  ## For QoS data or a management frame, this determines whether the frame
+  ## contains an HT Control Field.
+  let order = (fc.uint16 and 0b1000_0000_0000_0000) shr 15
+  return bool(order)
+
 proc parsePacket*(data: string): Packet =
   # Required fields in header:
   #  * Frame control
@@ -96,7 +103,8 @@ proc parsePacket*(data: string): Packet =
   offset.inc(6)
 
   # Take care of address 1,2 and seq control.
-  case result.header.frameControl.getType()
+  let frameType = result.header.frameControl.getType()
+  case frameType
   of Data, Management:
     # All data and management frames have address2/3, and sequence control.
     copyMem(addr result.header.address2, addr data[offset], 6)
@@ -120,9 +128,20 @@ proc parsePacket*(data: string): Packet =
   # Other fields for data frames include: Address 4, QoS control, HT control.
   # TODO ^
 
-  result.calculatedFCS = crc32(data[0 ..< ^4])
-  result.body = ""
+  # Parse HT Control Field for management frames.
+  if frameType == Management: #or is QoS frame, TODO
+    littleEndian32(addr result.header.htControl, addr data[offset])
+    offset.inc(2)
 
+  # Handle frame body
+  case frameType
+  of Management:
+    result.body = data[offset ..< ^4]
+  else:
+    result.body = "" # TODO
+
+  # Calculate FCS for the data we received.
+  result.calculatedFCS = crc32(data[0 ..< ^4])
   # Get recieved FCS
   var fcs = data[^4 .. ^1]
   result.receivedFCS = cast[ptr uint32](addr fcs[0])[]
