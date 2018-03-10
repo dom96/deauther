@@ -8,7 +8,7 @@
 ##
 ## For the formal standard, see section 8 in the IEEE 802.11 2012 document:
 ## https://legal.vvv.enseirb-matmeca.fr/download/amichel/%5BStandard%20LDPC%5D%20802.11-2012.pdf
-import strformat, strutils, endians
+import strformat, strutils, endians, options
 
 import crc32
 
@@ -107,6 +107,9 @@ proc parsePacket*(data: string): Packet =
   case frameType
   of Data, Management:
     # All data and management frames have address2/3, and sequence control.
+    if data.len < offset + 14:
+      raise newException(ValueError, "Expected 14 more bytes")
+
     copyMem(addr result.header.address2, addr data[offset], 6)
     offset.inc(6)
 
@@ -123,7 +126,7 @@ proc parsePacket*(data: string): Packet =
       copyMem(addr result.header.address2, addr data[offset], 6)
       offset.inc(6)
   of Reserved:
-    assert false
+    discard
 
   # Other fields for data frames include: Address 4, QoS control, HT control.
   # TODO ^
@@ -165,10 +168,28 @@ proc `$`*(fc: FrameControl): string =
   of Data:
     subtype = $getDataSubtype(fc)
   of Reserved:
-    assert false
+    subtype = $f
 
   return fmt("(version: {version.toBin(2)}, type: {typ}, " &
              "subtype: {subtype}, ... {f:b})")
+
+proc getSSID*(packet: Packet): Option[string] =
+  ## Attempts to extract an SSID from a packet. Only some packets will contain
+  ## an SSID. This currently focuses on a Beacon management frame.
+  if packet.header.frameControl.getType() != Management:
+    return none(string)
+
+  # According to: https://mrncciew.com/2014/10/08/802-11-mgmt-beacon-frame/
+  # Timestamp (8 bytes)
+  # Beacon interval (2 bytes)
+  # Capability info (2 bytes)
+  # SSID (variable size, max 32 bytes)
+  result = some("")
+  # The IEEE spec doesn't explain how large the fields above are, but it
+  # does explain that there is a byte containing the length before the SSID...
+  let length = packet.body[11].int
+  if length <= 0: return none(string)
+  result = some[string](packet.body[12 ..< 12+length])
 
 when isMainModule:
   import radiotap
@@ -197,4 +218,11 @@ when isMainModule:
 
     let p = parsePacket(radiotap.data)
     doAssert p.header.frameControl.getType() == Management
-    echo p
+    doAssert p.getSSID().get() == "ASK4 Wireless (802.1x)"
+
+  block test4:
+    const data = "\x00\x00\x19\x00o\x08\x00\x00\x13\x8C\x1E\x00\x00\x00\x00\x00Z0\x90\x15@\x01\xAD\xA7\x01\x12\x8C\xA1l\xFE\xAD\x1B{\xD3\x9B\x0AT~\xD6"
+    let radiotap = parseRadiotap(data)
+
+    doAssertRaises(ValueError):
+      let p = parsePacket(radiotap.data)
