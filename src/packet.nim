@@ -27,6 +27,7 @@ type
     header*: MacHeader
     body*: string
     calculatedFCS*: Crc32
+    receivedFCS*: Crc32
 
   FrameType* = enum
     Management, Control, Data, Reserved
@@ -47,6 +48,28 @@ type
     CFAck, CFPoll, CFAckCFPoll, QoSData, QoSDataCFAck, QoSDataCFPoll,
     QoSDataCFAckCFPoll, QoSNull,
     Reserved13, QoSCFPoll, QoSCFAckCFPoll
+
+# http://www.sss-mag.com/pdf/802_11tut.pdf
+proc getType*(fc: FrameControl): FrameType =
+  let typ = (fc.uint16 and 0b0000_0000_0000_1100) shr 2
+  case typ
+  of 0: return Management
+  of 1: return Control
+  of 2: return Data
+  of 3: return Reserved
+  else: assert false
+
+proc getManagementSubtype*(fc: FrameControl): ManagementSubtype =
+  let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
+  return ManagementSubtype(st)
+
+proc getControlSubtype*(fc: FrameControl): ControlSubtype =
+  let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
+  return ControlSubtype(st)
+
+proc getDataSubtype*(fc: FrameControl): DataSubtype =
+  let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
+  return DataSubtype(st)
 
 proc parsePacket*(data: string): Packet =
   # Required fields in header:
@@ -72,33 +95,41 @@ proc parsePacket*(data: string): Packet =
   copyMem(addr result.header.address1, addr data[offset], 6)
   offset.inc(6)
 
+  # Take care of address 1,2 and seq control.
+  case result.header.frameControl.getType()
+  of Data, Management:
+    # All data and management frames have address2/3, and sequence control.
+    copyMem(addr result.header.address2, addr data[offset], 6)
+    offset.inc(6)
+
+    copyMem(addr result.header.address3, addr data[offset], 6)
+    offset.inc(6)
+
+    littleEndian16(addr result.header.sequenceControl, addr data[offset])
+    offset.inc(2)
+  of Control:
+    let subtype = result.header.frameControl.getControlSubtype()
+
+    # Read the second address for all subtypes which possess it.
+    if subtype in{RTS, PSPoll, CFEnd, CFEndCFAck, BlockAckReq, BlockAck}:
+      copyMem(addr result.header.address2, addr data[offset], 6)
+      offset.inc(6)
+  of Reserved:
+    assert false
+
+  # Other fields for data frames include: Address 4, QoS control, HT control.
+  # TODO ^
+
   result.calculatedFCS = crc32(data[0 ..< ^4])
+  result.body = ""
+
+  # Get recieved FCS
+  var fcs = data[^4 .. ^1]
+  result.receivedFCS = cast[ptr uint32](addr fcs[0])[]
 
 proc `$`*(mac: MACAddress): string =
   let m = array[6, uint8](mac)
   return fmt"{m[0]:X}:{m[1]:X}:{m[2]:X}:{m[3]:X}:{m[4]:X}:{m[5]:X}"
-
-# http://www.sss-mag.com/pdf/802_11tut.pdf
-proc getType*(fc: FrameControl): FrameType =
-  let typ = (fc.uint16 and 0b0000_0000_0000_1100) shr 2
-  case typ
-  of 0: return Management
-  of 1: return Control
-  of 2: return Data
-  of 3: return Reserved
-  else: assert false
-
-proc getManagementSubtype*(fc: FrameControl): ManagementSubtype =
-  let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
-  return ManagementSubtype(st)
-
-proc getControlSubtype*(fc: FrameControl): ControlSubtype =
-  let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
-  return ControlSubtype(st)
-
-proc getDataSubtype*(fc: FrameControl): DataSubtype =
-  let st = (fc.uint16 and 0b0000_0000_1111_0000) shr 4
-  return DataSubtype(st)
 
 proc toBin(x: uint16, len: Positive): string = toBin(x.BiggestInt, len)
 proc `$`*(fc: FrameControl): string =
@@ -120,12 +151,6 @@ proc `$`*(fc: FrameControl): string =
   return fmt("(version: {version.toBin(2)}, type: {typ}, " &
              "subtype: {subtype}, ... {f:b})")
 
-proc getFCS*(packet: Packet): Crc32 =
-  if packet.body.len < 4: return 0.Crc32
-
-  var fcs = packet.body[^4 .. ^1]
-  result = cast[ptr uint32](addr fcs[0])[]
-
 when isMainModule:
   import radiotap
   block test1:
@@ -134,3 +159,23 @@ when isMainModule:
 
     let p = parsePacket(radiotap.data)
     doAssert p.header.frameControl.getType() == Data
+    doAssert $p.header.address1 == "5C:96:56:2B:5D:1D"
+    doAssert $p.header.address2 == "34:8F:27:1E:1C:3C"
+
+  block test2:
+    const data = "\x00\x00\x19\x00o\x08\x00\x00\xB8@\xA3\x0A\x00\x00\x00\x00\x120\xB8\x15@\x01\xAB\xA4\x01\x94\x00\x00\x004\x8F\'\x1E\x1C<\xA0\xD3zeci\x04\x00\x10\x96\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFFNh`\xEB"
+    let radiotap = parseRadiotap(data)
+
+    let p = parsePacket(radiotap.data)
+    doAssert p.header.frameControl.getType() == Control
+    doAssert p.header.frameControl.getControlSubtype() == BlockAck
+    doAssert $p.header.address1 == "34:8F:27:1E:1C:3C"
+    doAssert $p.header.address2 == "A0:D3:7A:65:63:69"
+
+  block test3:
+    const data = "\x00\x00\x19\x00o\x08\x00\x00p\xE0\xA5\x0A\x00\x00\x00\x00\x12\x0C\xB8\x15@\x01\xC8\xA4\x01\x80\x00\x00\x00\xFF\xFF\xFF\xFF\xFF\xFF4\x8F\'^\x1C<4\x8F\'^\x1C<@:\x9C\xB1\xF5t\xBF\x08\x00\x00d\x00\x11\x11\x00\x16ASK4 Wireless (802.1x)\x01\x08\x8C\x12\x98$\xB0H`l\x03\x01p\x05\x04\x00\x01\x00\x00\x07\x0AGB d\x05\x1E\x84\x02\x1E\x00\xDD\x18\x00P\xF2\x02\x01\x01\x82\x00\x03\xA4\x00\x00\'\xA4\x00\x00BC^\x00b2/\x000\x14\x01\x00\x00\x0F\xAC\x04\x01\x00\x00\x0F\xAC\x04\x01\x00\x00\x0F\xAC\x01\x00\x00F\x05\x02\x00\x00\x00\x00-\x1A\xEF\x19\x1B\xFF\xFF\xFF\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00=\x16p\x07\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0B\x05\x00\x00\x03\x00\x00\x7F\x08\x00\x00\x08\x00\x00\x00\x00@\xBF\x0C\x92\x01\x80#\xEA\xFF\x00\x00\xEA\xFF\x00\x00\xC0\x05\x00\x00\x00\xFC\xFF\xC3\x05\x03<<<\x05\xDD\x08\x00\x13\x92\x01\x00\x01\x05\x00\xF5\x0A\\\xDE"
+    let radiotap = parseRadiotap(data)
+
+    let p = parsePacket(radiotap.data)
+    doAssert p.header.frameControl.getType() == Management
+    echo p
