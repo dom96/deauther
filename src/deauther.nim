@@ -1,11 +1,11 @@
-import strutils, os
+import strutils, os, options, tables
 
 import pcap/wrapper
 import corewlan
 
 import radiotap, packet
 
-proc getPacket(pcap: pcap_t) =
+proc getPacket(pcap: pcap_t): Packet =
   var packet: ptr pcap_pkthdr
   var buffer: cstring
   let ret = pcap_next_ex(pcap, addr packet, addr buffer)
@@ -22,10 +22,11 @@ proc getPacket(pcap: pcap_t) =
     if radiotap.header.len >= packet.caplen:
       return
 
-    let ieee802packet = parsePacket(radiotap.data)
-    echo(ieee802packet.header)
-    if ieee802packet.calculatedFCS != ieee802packet.getFCS:
-      echo("  Packet CRC doesn't match")
+    let packet = parsePacket(radiotap.data)
+    if packet.calculatedFCS != packet.receivedFCS:
+      echo("Skipping packet due to CRC check failure")
+      return getPacket(pcap)
+    return packet
   else:
     pcap.checkError(ret)
 
@@ -37,17 +38,26 @@ when isMainModule:
   echo("Disassociating...")
   wif.disassociate()
 
+  # Set up PCAP.
   var err = newString(PCAP_ERRBUF_SIZE)
   var p = pcap_open_live(defaultIfName, 65536.cint, 1.cint, 1.cint, addr(err))
+
+  # Set up storage for MAC addresses.
+  var macs = initCountTable[string]()
 
   if not p.isNil():
     p.checkError p.pcap_set_datalink(DLT_IEEE802_11_RADIO)
     while true:
       try:
-        getPacket(p)
+        let packet = getPacket(p)
+        macs.inc($packet.header.address1)
+        macs.inc($packet.header.address2)
+        macs.inc($packet.header.address3)
+
       except ValueError as exc:
         echo("Failed ", exc.msg)
 
+      echo(macs)
       sleep(500)
   else:
     echo "Could not open pcap"
