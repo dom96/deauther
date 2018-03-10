@@ -1,6 +1,7 @@
 import strutils, os
 
 import pcap/wrapper
+import corewlan
 
 import radiotap, packet
 
@@ -29,6 +30,13 @@ proc getPacket(pcap: pcap_t) =
     pcap.checkError(ret)
 
 when isMainModule:
+  let wfc = sharedWiFiClient()
+  let wif = wfc.getInterface()
+  echo("Current SSID: ", toCString(wif.ssid()))
+
+  echo("Disassociating...")
+  wif.disassociate()
+
   var err = newString(PCAP_ERRBUF_SIZE)
   var p = pcap_open_live(defaultIfName, 65536.cint, 1.cint, 1.cint, addr(err))
 
