@@ -27,7 +27,8 @@ type
     width, height: int
     style*: ListBoxStyle
     data: ListBoxData
-    selectedIndex*: int
+    selectedIndex: int
+    firstItemInView: int ## Used for scrolling
 
 proc initListBoxStyle*(): ListBoxStyle =
   result.border = ["┌", "┐", "┘", "└", "─", "│"]
@@ -42,8 +43,23 @@ proc newListBox*(width, height: int, data: ListBoxData): ListBox =
     height: height,
     style: initListBoxStyle(),
     data: data,
-    selectedIndex: 0
+    selectedIndex: 0,
+    firstItemInView: 0
   )
+
+proc distanceFromVisibility(lb: ListBox, index: int): int =
+  ## Returns the number of positions this item is away from being visible.
+  let drawableHeight = lb.height - 3 # Borders (2) + Column (1)
+  return max(0, index - drawableHeight - lb.firstItemInView)
+
+proc scroll(lb: ListBox) =
+  # Check if selected index is off the screen.
+  if lb.selectedIndex < lb.firstItemInView:
+    lb.firstItemInView = lb.selectedIndex
+  else:
+    let dist = lb.distanceFromVisibility(lb.selectedIndex)
+    if dist != 0:
+      lb.firstItemInView.inc(dist)
 
 proc onDown*(lb: ListBox) =
   lb.selectedIndex.inc
@@ -51,11 +67,15 @@ proc onDown*(lb: ListBox) =
   if lb.selectedIndex >= lb.data.values.len:
     lb.selectedIndex = 0
 
+  scroll(lb)
+
 proc onUp*(lb: ListBox) =
   lb.selectedIndex.dec
 
   if lb.selectedIndex < 0:
     lb.selectedIndex = lb.data.values.len-1
+
+  scroll(lb)
 
 proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
@@ -133,6 +153,9 @@ proc draw(nb: NimBox, lb: ListBox, y: int) =
 
   # Draw the values.
   for rowI, row in pairs(lb.data.values):
+    # Skip for scrolling.
+    if rowI < lb.firstItemInView: continue
+
     var curX = x+1
     for colI, size in pairs(columnSizes):
       let label = row[colI].pad(size, false)
@@ -156,6 +179,8 @@ proc draw(nb: NimBox, lb: ListBox, y: int) =
         curX.inc
     curY.inc
 
+    # Don't draw past height of box.
+    if curY > y + lb.height - 1: break
 
 when isMainModule:
   var nb = newNimbox()
@@ -173,6 +198,9 @@ when isMainModule:
     )
   )
 
+  for i in 0..50:
+    lb.data.values.add(@["8E:F3:1E:2A:1E", $i])
+
   var evt: Event
   while true:
     nb.clear()
@@ -189,6 +217,8 @@ when isMainModule:
         case evt.sym
         of Symbol.Escape:
           break
+        of Symbol.Character:
+          if evt.ch == 'q': break
         of Symbol.Down:
           lb.onDown()
         of Symbol.Up:
