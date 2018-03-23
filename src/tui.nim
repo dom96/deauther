@@ -16,18 +16,46 @@ type
     columnLabels: seq[string]
     values: seq[seq[string]]
 
+  ListBoxStyle* = object
+    border*: array[6, string]
+    fg*: Color
+    bg*: Color
+    selectionBg*: Color
+    selectionFg*: Color
+
   ListBox* = ref object
     width, height: int
-    style*: array[6, string]
+    style*: ListBoxStyle
     data: ListBoxData
+    selectedIndex*: int
 
-proc newListBox(width, height: int, data: ListBoxData): ListBox =
+proc initListBoxStyle*(): ListBoxStyle =
+  result.border = ["┌", "┐", "┘", "└", "─", "│"]
+  result.fg = clrWhite
+  result.bg = clrDefault
+  result.selectionBg = clrCyan
+  result.selectionFg = clrBlack
+
+proc newListBox*(width, height: int, data: ListBoxData): ListBox =
   ListBox(
     width: width,
     height: height,
-    style: ["┌", "┐", "┘", "└", "─", "│"],
-    data: data
+    style: initListBoxStyle(),
+    data: data,
+    selectedIndex: 0
   )
+
+proc onDown*(lb: ListBox) =
+  lb.selectedIndex.inc
+
+  if lb.selectedIndex >= lb.data.values.len:
+    lb.selectedIndex = 0
+
+proc onUp*(lb: ListBox) =
+  lb.selectedIndex.dec
+
+  if lb.selectedIndex < 0:
+    lb.selectedIndex = lb.data.values.len-1
 
 proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
@@ -62,25 +90,25 @@ proc draw(nb: NimBox, lb: ListBox, y: int) =
 
   # Top line
   for curX in x..x+lb.width:
-    nb.print(curX, y, lb.style[4], fg=clrWhite)
+    nb.print(curX, y, lb.style.border[4], fg=clrWhite)
 
   # Bottom line
   for curX in x..x+lb.width:
-    nb.print(curX, y+lb.height, lb.style[4], fg=clrWhite)
+    nb.print(curX, y+lb.height, lb.style.border[4], fg=clrWhite)
 
   # Left line
   for curY in y..y+lb.height:
-    nb.print(x, curY, lb.style[5], fg=clrWhite)
+    nb.print(x, curY, lb.style.border[5], fg=clrWhite)
 
   # Right line
   for curY in y..y+lb.height:
-    nb.print(x+lb.width, curY, lb.style[5], fg=clrWhite)
+    nb.print(x+lb.width, curY, lb.style.border[5], fg=clrWhite)
 
   # Corners
-  nb.print(x, y, lb.style[0], fg=clrWhite)
-  nb.print(x+lb.width, y, lb.style[1], fg=clrWhite)
-  nb.print(x, y+lb.height, lb.style[3], fg=clrWhite)
-  nb.print(x+lb.width, y+lb.height, lb.style[2], fg=clrWhite)
+  nb.print(x, y, lb.style.border[0], fg=clrWhite)
+  nb.print(x+lb.width, y, lb.style.border[1], fg=clrWhite)
+  nb.print(x, y+lb.height, lb.style.border[3], fg=clrWhite)
+  nb.print(x+lb.width, y+lb.height, lb.style.border[2], fg=clrWhite)
 
   var curY = y+1
   let columnSizes = calcSizes(lb)
@@ -99,22 +127,32 @@ proc draw(nb: NimBox, lb: ListBox, y: int) =
 
       # Draw the separator
       if i != len(columnSizes)-1:
-        nb.print(curX, curY, lb.style[5], fg=clrWhite)
+        nb.print(curX, curY, lb.style.border[5], fg=clrWhite)
         curX.inc
     curY.inc
 
   # Draw the values.
-  for row in lb.data.values:
+  for rowI, row in pairs(lb.data.values):
     var curX = x+1
-    for i, size in pairs(columnSizes):
-      let label = row[i].pad(size, false)
+    for colI, size in pairs(columnSizes):
+      let label = row[colI].pad(size, false)
 
-      nb.print(curX, curY, label, fg=clrWhite)
+      let fgColor =
+        if rowI == lb.selectedIndex:
+          lb.style.selectionFg
+        else:
+          lb.style.fg
+      let bgColor =
+        if rowI == lb.selectedIndex:
+          lb.style.selectionBg
+        else:
+          lb.style.bg
+      nb.print(curX, curY, label, fg=fgColor, bg=bgColor)
       curX.inc label.len
 
       # Draw the separator
-      if i != len(columnSizes)-1:
-        nb.print(curX, curY, lb.style[5], fg=clrWhite)
+      if colI != len(columnSizes)-1:
+        nb.print(curX, curY, lb.style.border[5], fg=fgColor, bg=bgColor)
         curX.inc
     curY.inc
 
@@ -123,10 +161,6 @@ when isMainModule:
   var nb = newNimbox()
   defer: nb.shutdown()
 
-  # Draw title header
-  nb.drawTitle()
-
-  # Draw list box.
   let lb = newListBox(
     50, 20,
     ListBoxData(
@@ -138,10 +172,27 @@ when isMainModule:
       ]
     )
   )
-  nb.draw(lb, 3)
 
-  for i in 1..5:
-    nb.cursor = (i, 2)
+  var evt: Event
+  while true:
+    nb.clear()
+    # Draw title header
+    nb.drawTitle()
+
+    # Draw list box.
+    nb.draw(lb, 3)
     nb.present()
-    sleep(2000)
+
+    evt = nb.peekEvent(1000)
+    case evt.kind:
+      of EventType.Key:
+        case evt.sym
+        of Symbol.Escape:
+          break
+        of Symbol.Down:
+          lb.onDown()
+        of Symbol.Up:
+          lb.onUp()
+        else: discard
+      else: discard
 
