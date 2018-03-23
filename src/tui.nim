@@ -1,4 +1,4 @@
-import strutils, os, sequtils, math
+import strutils, os, sequtils, math, unicode, future
 
 import nimbox
 
@@ -6,9 +6,27 @@ proc drawText(nb: NimBox, y: int, text: string, fg, bg: Color) =
   let middle = nb.width div 2 - (text.len div 2)
   nb.print(middle, y, text, fg=fg, bg=bg)
 
-proc drawTitle(nb: NimBox) =
+proc drawTitle*(nb: NimBox, title: string) =
   nb.print(2, 0, " ".repeat(nb.width() - 3), bg=clrBlue)
-  nb.drawText(0, "Deauther", clrWhite, clrBlue)
+  nb.drawText(0, title, clrWhite, clrBlue)
+
+proc drawControls*(nb: NimBox, controls: openarray[tuple[key, desc: string]]) =
+  nb.print(2, nb.height()-1, " ".repeat(nb.width() - 3), bg=clrCyan)
+
+  var maxDescSize = controls.map(x => x.desc.len).max()
+
+  var x = 2
+  for control in controls:
+    # TODO: All this padding can be refactored into a nice drawing function.
+    let paddedKey = " ".repeat(max(0, 2-control.key.len)) & control.key
+    nb.print(x, nb.height()-1, paddedKey, fg=clrDefault, bg=clrDefault)
+    x.inc(paddedKey.runeLen)
+
+    let paddedDesc = control.desc & " ".repeat(
+      max(0, maxDescSize-control.desc.len)
+    )
+    nb.print(x, nb.height()-1, paddedDesc, fg=clrBlack, bg=clrCyan)
+    x.inc(paddedDesc.runeLen)
 
 type
   ListBoxData* = object
@@ -205,10 +223,18 @@ when isMainModule:
   while true:
     nb.clear()
     # Draw title header
-    nb.drawTitle()
+    nb.drawTitle("Deauther")
 
     # Draw list box.
     nb.draw(lb, 3)
+
+    # Draw controls.
+    nb.drawControls(
+      {
+        "Enter": "Select",
+        "Q": "Quit"
+      }
+    )
     nb.present()
 
     evt = nb.peekEvent(1000)
