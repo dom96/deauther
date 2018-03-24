@@ -107,10 +107,14 @@ proc gatherMacs(deauther: Deauther) {.async.} =
     let ssid = $network.ssid.toCString()
 
     if ssid == deauther.currentSSID and network.rssiValue > -70:
-      accessPoints[$network.bssid.toCString()] = network
+      let bssid = ($network.bssid.toCString()).toUpperAscii()
+      accessPoints[bssid] = network
 
   # Set up storage for MAC addresses.
-  var macs = initOrderedTable[string, tuple[tx, rx: int, ch: CWChannel, rssi: int]]()
+  var macs = initOrderedTable[
+    string,
+    tuple[tx, rx: int, ch: CWChannel, rssi: int]
+  ]()
   while deauther.current == Macs:
     for bssid, network in accessPoints:
       # Switch to network's channel.
@@ -131,7 +135,9 @@ proc gatherMacs(deauther: Deauther) {.async.} =
           # http://80211notes.blogspot.co.uk/2013/09/understanding-address-fields-in-80211.html
 
           # Only care about packets transmitted to or from current network...
-          if bssid.toUpperAscii() notin [
+          # TODO: Compare BSSID in a better way, this toUpper/toLower conversion
+          # is pretty error prone. Comparing numbers would be better.
+          if bssid notin [
               $packet.header.address1, $packet.header.address2
             ]:
             info("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
@@ -152,13 +158,18 @@ proc gatherMacs(deauther: Deauther) {.async.} =
 
     # Update UI
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
-    deauther.macsBox.data.values = @[]
+    deauther.macsBox.clear()
     for key, value in macs:
-      deauther.macsBox.data.values.add(@[
+      if key in ["FF:FF:FF:FF:FF:FF", "0:0:0:0:0:0"]: continue
+
+      let value = @[
         key, $value.tx, $value.rx, $value.ch.channelNumber, $value.rssi
-      ])
+      ]
 
-
+      if key in accessPoints:
+        deauther.macsBox.add(value, fg=clrBlue)
+      else:
+        deauther.macsBox.add(value)
 
     await sleepAsync(200)
 
@@ -167,20 +178,20 @@ proc selectSSID(deauther: Deauther) {.async.} =
   let wif = wfc.getInterface()
 
   while deauther.current == SelectSSID:
-    deauther.ssidBox.data.values = @[]
+    deauther.ssidBox.clear()
 
     # In case we ever want to probe manually. This explains how the OS does it
     # https://networkengineering.stackexchange.com/a/17225/46039
 
     let networks = wif.cachedScanResults()
     for network in items(CWNetwork, networks.allObjects()):
-      deauther.ssidBox.data.values.add(@[
+      deauther.ssidBox.add(@[
         $network.ssid.toCString(), $network.bssid.toCString(),
         $network.wlanChannel.channelNumber,
         $network.rssiValue
       ])
 
-    deauther.ssidBox.data.values.sort((x, y) => cmp(x[3], y[3]))
+    deauther.ssidBox.sort((x, y) => cmp(x[3], y[3]))
 
     await sleepAsync(1000)
 

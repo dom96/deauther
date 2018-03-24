@@ -18,4 +18,4 @@ proc newListBoxLogger*(levelThreshold = lvlAll,
 
 method log*(logger: ListBoxLogger, level: Level, args: varargs[string, `$`]) =
   if level >= logger.levelThreshold:
-    logger.lb.data.values.add(@[substituteLog(logger.fmtStr, level, args)])
+    logger.lb.add(@[substituteLog(logger.fmtStr, level, args)])

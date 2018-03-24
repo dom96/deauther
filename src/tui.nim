@@ -1,4 +1,4 @@
-import strutils, os, sequtils, math, unicode, future
+import strutils, os, sequtils, math, unicode, future, algorithm, future
 
 import nimbox
 
@@ -42,10 +42,16 @@ proc drawControls*(nb: NimBox, controls: openarray[tuple[key, desc: string]]) =
     x.inc(paddedDesc.runeLen)
 
 type
+  ListBoxValue* = object
+    text: string
+    fg: Color
+    bg: Color
+    style: Style
+
   ListBoxData* = object
     columnCount: int
     columnLabels: seq[string]
-    values*: seq[seq[string]]
+    values: seq[seq[ListBoxValue]]
 
   ListBoxStyle* = object
     border*: array[6, string]
@@ -57,7 +63,7 @@ type
   ListBox* = ref object
     width, height: int
     style*: ListBoxStyle
-    data*: ListBoxData
+    data: ListBoxData
     selectedIndex: int
     firstItemInView: int ## Used for scrolling
 
@@ -67,6 +73,30 @@ proc initListBoxData*(columnLabels: seq[string]): ListBoxData =
     columnLabels: columnLabels,
     values: @[]
   )
+
+proc add*(lb: ListBox, data: seq[string], fg, bg: Color, style = styNone) =
+  var value: seq[ListBoxValue] = @[]
+  for t in data:
+    value.add(
+      ListBoxValue(
+        text: t, fg: fg, bg: bg, style: style
+      )
+    )
+  lb.data.values.add(value)
+
+proc add*(lb: ListBox, data: seq[string], fg: Color) =
+  lb.add(data, fg, lb.style.bg)
+
+proc add*(lb: ListBox, data: seq[string]) =
+  lb.add(data, lb.style.fg, lb.style.bg)
+
+proc clear*(lb: ListBox) =
+  lb.data.values = @[]
+
+proc sort*(lb: ListBox, cmp: proc (x, y: seq[string]): int) =
+  lb.data.values.sort((x, y) => (
+    cmp(x.map(a => a.text), y.map(b => b.text))
+  ))
 
 proc initListBoxStyle*(): ListBoxStyle =
   result.border = ["┌", "┐", "┘", "└", "─", "│"]
@@ -124,7 +154,8 @@ proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
 
   let data = # Use the first row, or the columns if there are no rows.
-    if lb.data.values.len > 0: lb.data.values[0]
+    if lb.data.values.len > 0:
+      map(lb.data.values[0], x => x.text)
     else: lb.data.columnLabels
   for i, val in pairs(data):
     result.add(max(val.len, lb.data.columnLabels[i].len+2))
@@ -205,18 +236,18 @@ proc draw*(nb: NimBox, lb: ListBox, y: int) =
 
     var curX = x+1
     for colI, size in pairs(columnSizes):
-      let label = row[colI].pad(size, false)
+      let label = row[colI].text.pad(size, false)
 
       let fgColor =
         if rowI == lb.selectedIndex:
           lb.style.selectionFg
         else:
-          lb.style.fg
+          row[colI].fg
       let bgColor =
         if rowI == lb.selectedIndex:
           lb.style.selectionBg
         else:
-          lb.style.bg
+          row[colI].bg
       nb.print(curX, curY, label, fg=fgColor, bg=bgColor)
       curX.inc label.len
 
