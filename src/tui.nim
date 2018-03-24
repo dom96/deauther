@@ -10,6 +10,19 @@ proc drawTitle*(nb: NimBox, title: string) =
   nb.print(2, 0, " ".repeat(nb.width() - 3), bg=clrBlue)
   nb.drawText(0, title, clrWhite, clrBlue)
 
+proc drawStats*(nb: NimBox, stats: openarray[tuple[label, value: string]]) =
+  nb.print(2, 1, " ".repeat(nb.width() - 3), bg=clrWhite)
+
+  var x = 2
+  for stat in stats:
+    nb.print(x, 1, stat.label & ":", fg=clrBlack, bg=clrWhite, style=styBold)
+    x.inc(stat.label.runeLen + 2)
+
+    nb.print(x, 1, stat.value, fg=clrBlack, bg=clrWhite)
+    x.inc(stat.value.runeLen)
+
+    x.inc(2) # Spacing between stats.
+
 proc drawControls*(nb: NimBox, controls: openarray[tuple[key, desc: string]]) =
   nb.print(2, nb.height()-1, " ".repeat(nb.width() - 3), bg=clrCyan)
 
@@ -32,7 +45,7 @@ type
   ListBoxData* = object
     columnCount: int
     columnLabels: seq[string]
-    values: seq[seq[string]]
+    values*: seq[seq[string]]
 
   ListBoxStyle* = object
     border*: array[6, string]
@@ -44,9 +57,16 @@ type
   ListBox* = ref object
     width, height: int
     style*: ListBoxStyle
-    data: ListBoxData
+    data*: ListBoxData
     selectedIndex: int
     firstItemInView: int ## Used for scrolling
+
+proc initListBoxData*(columnLabels: seq[string]): ListBoxData =
+  ListBoxData(
+    columnCount: columnLabels.len,
+    columnLabels: columnLabels,
+    values: @[]
+  )
 
 proc initListBoxStyle*(): ListBoxStyle =
   result.border = ["┌", "┐", "┘", "└", "─", "│"]
@@ -97,7 +117,11 @@ proc onUp*(lb: ListBox) =
 
 proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
-  for i, val in pairs(lb.data.values[0]):
+
+  let data = # Use the first row, or the columns if there are no rows.
+    if lb.data.values.len > 0: lb.data.values[0]
+    else: lb.data.columnLabels
+  for i, val in pairs(data):
     result.add(max(val.len, lb.data.columnLabels[i].len+2))
 
   let sum = foldl(result, a + b + 1)
@@ -120,7 +144,7 @@ proc pad(label: string, len: int, centre: bool): string =
   else:
     result = label[0 ..^ -diff] # TODO: Ellipsis?
 
-proc draw(nb: NimBox, lb: ListBox, y: int) =
+proc draw*(nb: NimBox, lb: ListBox, y: int) =
   ## Draws a list box in the middle of the screen starting at location y on
   ## the y-axis.
 
@@ -224,6 +248,12 @@ when isMainModule:
     nb.clear()
     # Draw title header
     nb.drawTitle("Deauther")
+    nb.drawStats(
+      {
+        "CRC fails": "54",
+        "Errors": "12"
+      }
+    )
 
     # Draw list box.
     nb.draw(lb, 3)
