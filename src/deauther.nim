@@ -113,6 +113,7 @@ proc gatherMacs(deauther: Deauther) {.async.} =
       macs.inc($packet.header.address2)
       macs.inc($packet.header.address3)
 
+    await sleepAsync(200)
     # Update UI
     deauther.macsBox.data.values = @[]
     for key, value in macs:
@@ -140,7 +141,7 @@ proc draw(deauther: Deauther) =
   of Menu:
     deauther.nb.drawControls(
       {
-        "1": "Scan radio waves for packets",
+        "1": "Scan",
         "Q": "Quit"
       }
     )
