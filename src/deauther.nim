@@ -21,18 +21,18 @@ type
     logger: ListBoxLogger
 
 proc getPacket(pcap: AsyncPcap,
-               deauther: Deauther): Future[Option[Packet]] {.async.} =
+               deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
   let data = await pcap.readPacket()
 
   let radiotap = parseRadiotap(data)
   if radiotap.header.len.int >= data.len:
-    return none(Packet)
+    return none((Radiotap, Packet))
 
   let packet = parsePacket(radiotap.data)
   if packet.calculatedFCS != packet.receivedFCS:
     deauther.crcFails.inc()
     return await getPacket(pcap, deauther)
-  return some(packet)
+  return some((radiotap, packet))
 
 proc monitor(): AsyncPcap =
   # Set up PCAP.
@@ -126,12 +126,14 @@ proc gatherMacs(deauther: Deauther) {.async.} =
         if packetFut.failed:
           error("Failed ", packetFut.error.msg)
         else:
-          let packet = packetFut.read.get()
+          let (radiotap, packet) = packetFut.read.get()
           # How are address fields used?
           # http://80211notes.blogspot.co.uk/2013/09/understanding-address-fields-in-80211.html
 
           # Only care about packets transmitted to or from current network...
-          if bssid.toUpperAscii() notin [$packet.header.address1, $packet.header.address2]:
+          if bssid.toUpperAscii() notin [
+              $packet.header.address1, $packet.header.address2
+            ]:
             info("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
             continue
 
@@ -143,9 +145,10 @@ proc gatherMacs(deauther: Deauther) {.async.} =
 
           macs[$packet.header.address1].rx.inc()
           macs[$packet.header.address1].ch = network.wlanChannel
+          macs[$packet.header.address1].rssi = radiotap.antennaSignal.int
           macs[$packet.header.address2].tx.inc()
           macs[$packet.header.address2].ch = network.wlanChannel
-          macs[$packet.header.address2].rssi = 0 # TODO:
+          macs[$packet.header.address2].rssi = radiotap.antennaSignal.int
 
     # Update UI
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))

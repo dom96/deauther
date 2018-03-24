@@ -17,8 +17,8 @@ type
     rate*: uint8
     channel*: tuple[freq, flags: uint16]
     fhss*: tuple[hopSet, hopPattern: uint8]
-    antennaSignal*: uint8
-    antennaNoise*: uint8
+    antennaSignal*: int8
+    antennaNoise*: int8
     antenna*: uint8
     xchannel*: tuple[flags: uint32, freq: uint16, channel, maxPower: uint8]
     mpdu*: tuple[refNumber: uint32, flags: uint16, crc, reserver: uint8]
@@ -141,8 +141,8 @@ when isMainModule:
   block test4:
     const data = "\x00\x00\x19\x00\x6f\x08\x00\x00\xbe\x2a\x2d\x00\x00\x00\x00\x00\x10\x04\x9e\x09\x80\x04\xc8\xad\x00"
     let radiotap = parseRadiotap(data)
-    doAssert radiotap.version == 0
-    doAssert radiotap.present == 2159
+    doAssert radiotap.header.version == 0
+    doAssert radiotap.header.present == 2159
     doAssert radiotap.tsft == 2960062
     doAssert radiotap.antennaSignal == 200
     doAssert radiotap.antennaNoise == 173
