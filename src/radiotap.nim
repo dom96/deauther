@@ -2,7 +2,7 @@
 ##
 ## http://www.radiotap.org/
 ## https://github.com/radiotap/python-radiotap/blob/master/radiotap/radiotap.py
-import endians
+import endians, logging
 
 type
   RadiotapHeader* = object
@@ -117,7 +117,7 @@ proc parseRadiotap*(packet: string): Radiotap =
         littleEndian16(addr result.vht.partialAid, addr p[offset])
         offset.inc(2)
       else:
-        echo("Unknown ", i)
+        warn("Radiotap unknown field ", i)
 
   # Store the rest as data.
   result.data = p[result.header.len .. ^1]

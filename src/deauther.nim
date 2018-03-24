@@ -100,24 +100,64 @@ proc gatherMacs(deauther: Deauther) {.async.} =
   # Set up PCAP.
   var p = monitor()
 
-  # Set up storage for MAC addresses.
-  var macs = initCountTable[string]()
-  while deauther.current == Macs:
-    let packetFut = getPacket(p, deauther)
-    yield packetFut
-    if packetFut.failed:
-      error("Failed ", packetFut.error.msg)
-    else:
-      let packet = packetFut.read.get()
-      macs.inc($packet.header.address1)
-      macs.inc($packet.header.address2)
-      macs.inc($packet.header.address3)
+  var accessPoints = initTable[string, CWNetwork]()
+  # Figure out the MAC addresses and channels of the APs we should be looking at.
+  let networks = wif.cachedScanResults()
+  for network in items(CWNetwork, networks.allObjects()):
+    let ssid = $network.ssid.toCString()
 
-    await sleepAsync(200)
+    if ssid == deauther.currentSSID and network.rssiValue > -70:
+      accessPoints[$network.bssid.toCString()] = network
+
+  # Set up storage for MAC addresses.
+  var macs = initOrderedTable[string, tuple[tx, rx: int, ch: CWChannel, rssi: int]]()
+  while deauther.current == Macs:
+    for bssid, network in accessPoints:
+      # Switch to network's channel.
+      info("Switching to ", network.wlanChannel.channelNumber)
+      info("Looking for packets from/to ", bssid)
+      wif.setWLANChannel(network.wlanChannel)
+
+      info("Reading packets for 300ms...")
+      let startTime = epochTime()
+      while epochTime() - startTime < 0.3:
+        let packetFut = getPacket(p, deauther)
+        yield packetFut
+        if packetFut.failed:
+          error("Failed ", packetFut.error.msg)
+        else:
+          let packet = packetFut.read.get()
+          # How are address fields used?
+          # http://80211notes.blogspot.co.uk/2013/09/understanding-address-fields-in-80211.html
+
+          # Only care about packets transmitted to or from current network...
+          if bssid.toUpperAscii() notin [$packet.header.address1, $packet.header.address2]:
+            info("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
+            continue
+
+          if $packet.header.address1 notin macs:
+            macs[$packet.header.address1] = (0, 0, nil, 0)
+
+          if $packet.header.address2 notin macs:
+            macs[$packet.header.address2] = (0, 0, nil, 0)
+
+          macs[$packet.header.address1].rx.inc()
+          macs[$packet.header.address1].ch = network.wlanChannel
+          macs[$packet.header.address2].tx.inc()
+          macs[$packet.header.address2].ch = network.wlanChannel
+          macs[$packet.header.address2].rssi = 0 # TODO:
+
     # Update UI
+    macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
     deauther.macsBox.data.values = @[]
     for key, value in macs:
-      deauther.macsBox.data.values.add(@[key, $value])
+      deauther.macsBox.data.values.add(@[
+        key, $value.tx, $value.rx, $value.ch.channelNumber, $value.rssi
+      ])
+
+
+
+    await sleepAsync(200)
 
 proc selectSSID(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
@@ -148,7 +188,7 @@ proc newDeauther(): Deauther =
     currentSSID: "",
     macsBox: newListBox(
       50, 20,
-      initListBoxData(@["MAC", "Packets"])
+      initListBoxData(@["MAC", "Tx", "Rx", "Ch", "📶"])
     ),
     ssidBox: newListBox(
       80, 20,

@@ -217,6 +217,9 @@ when isMainModule:
     let radiotap = parseRadiotap(data)
 
     let p = parsePacket(radiotap.data)
+    doAssert $p.header.address1 == "FF:FF:FF:FF:FF:FF"
+    doAssert $p.header.address2 == "34:8F:27:5E:1C:3C"
+    doAssert $p.header.address3 == "34:8F:27:5E:1C:3C"
     doAssert p.header.frameControl.getType() == Management
     doAssert p.getSSID().get() == "ASK4 Wireless (802.1x)"
 
