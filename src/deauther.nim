@@ -1,4 +1,5 @@
 import strutils, os, options, tables, times, strformat, asyncdispatch, logging
+import algorithm, future
 
 import pcap/[wrapper, async]
 import corewlan
@@ -8,14 +9,14 @@ import radiotap, packet, tui, listboxlogger
 
 type
   Stage = enum
-    Menu, Macs
+    Menu, SelectSSID, Macs
 
   Deauther = ref object
     nb: NimBox
     current: Stage
     currentSSID: string
     crcFails: int
-    macsBox: ListBox
+    macsBox, ssidBox: ListBox
     messagesOverlay: bool
     logger: ListBoxLogger
 
@@ -92,7 +93,6 @@ when false:
 proc gatherMacs(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
   let wif = wfc.getInterface()
-  deauther.currentSSID = $toCString(wif.ssid())
 
   info("Disassociating...")
   wif.disassociate()
@@ -102,7 +102,7 @@ proc gatherMacs(deauther: Deauther) {.async.} =
 
   # Set up storage for MAC addresses.
   var macs = initCountTable[string]()
-  while true:
+  while deauther.current == Macs:
     let packetFut = getPacket(p, deauther)
     yield packetFut
     if packetFut.failed:
@@ -119,6 +119,28 @@ proc gatherMacs(deauther: Deauther) {.async.} =
     for key, value in macs:
       deauther.macsBox.data.values.add(@[key, $value])
 
+proc selectSSID(deauther: Deauther) {.async.} =
+  let wfc = sharedWiFiClient()
+  let wif = wfc.getInterface()
+
+  while deauther.current == SelectSSID:
+    deauther.ssidBox.data.values = @[]
+
+    # In case we ever want to probe manually. This explains how the OS does it
+    # https://networkengineering.stackexchange.com/a/17225/46039
+
+    let networks = wif.cachedScanResults()
+    for network in items(CWNetwork, networks.allObjects()):
+      deauther.ssidBox.data.values.add(@[
+        $network.ssid.toCString(), $network.bssid.toCString(),
+        $network.wlanChannel.channelNumber,
+        $network.rssiValue
+      ])
+
+    deauther.ssidBox.data.values.sort((x, y) => cmp(x[3], y[3]))
+
+    await sleepAsync(1000)
+
 proc newDeauther(): Deauther =
   result = Deauther(
     nb: newNimbox(),
@@ -127,9 +149,17 @@ proc newDeauther(): Deauther =
     macsBox: newListBox(
       50, 20,
       initListBoxData(@["MAC", "Packets"])
+    ),
+    ssidBox: newListBox(
+      80, 20,
+      initListBoxData(@["SSID", "BSSID", "Channel", "📶"])
     )
-
   )
+
+  let wfc = sharedWiFiClient()
+  let wif = wfc.getInterface()
+
+  result.currentSSID = $toCString(wif.ssid())
 
 proc draw(deauther: Deauther) =
   deauther.nb.clear()
@@ -137,14 +167,21 @@ proc draw(deauther: Deauther) =
   # Draw title header
   deauther.nb.drawTitle("Deauther")
 
+  var controls = @[
+    ("Q", "Quit")
+  ]
   case deauther.current
   of Menu:
-    deauther.nb.drawControls(
+    controls =
+      @({ "1": "SSID", "2": "Scan"}) & controls
+  of SelectSSID:
+    deauther.nb.drawStats(
       {
-        "1": "Scan",
-        "Q": "Quit"
+        "SSID": deauther.currentSSID
       }
     )
+
+    deauther.nb.draw(deauther.ssidBox, 3)
   of Macs:
     deauther.nb.drawStats(
       {
@@ -156,11 +193,7 @@ proc draw(deauther: Deauther) =
     # Draw list box.
     deauther.nb.draw(deauther.macsBox, 3)
 
-    deauther.nb.drawControls(
-      {
-        "Q": "Quit"
-      }
-    )
+  deauther.nb.drawControls(controls)
 
   if deauther.messagesOverlay:
     deauther.nb.draw(deauther.logger.lb, 3)
@@ -177,6 +210,7 @@ when isMainModule:
 
   info("Started deauther")
 
+  let listBoxes = [deauther.logger.lb, deauther.macsBox, deauther.ssidBox]
   # Run event loop.
   var evt: Event
   while true:
@@ -191,6 +225,8 @@ when isMainModule:
         case evt.sym
         of Symbol.Escape:
           break
+        of Symbol.Backspace:
+          deauther.current = Menu
         of Symbol.Character:
           case evt.ch
           of 'q': break
@@ -198,15 +234,19 @@ when isMainModule:
             deauther.messagesOverlay = not deauther.messagesOverlay
           of '1':
             if deauther.current == Menu:
+              deauther.current = SelectSSID
+              asyncCheck selectSSID(deauther)
+          of '2':
+            if deauther.current == Menu:
               deauther.current = Macs
               asyncCheck gatherMacs(deauther)
           else:
             info("Key pressed: ", evt.ch)
         of Symbol.Down:
-          deauther.logger.lb.onDown()
-          deauther.macsBox.onDown()
+          for lb in listBoxes:
+            lb.onDown()
         of Symbol.Up:
-          deauther.logger.lb.onUp()
-          deauther.macsBox.onUp()
+          for lb in listBoxes:
+            lb.onUp()
         else: discard
       else: discard

@@ -115,6 +115,11 @@ proc onUp*(lb: ListBox) =
 
   scroll(lb)
 
+proc select*(lb: ListBox, index: int) =
+  lb.selectedIndex = index
+
+  scroll(lb)
+
 proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
 
@@ -142,7 +147,7 @@ proc pad(label: string, len: int, centre: bool): string =
     else:
       result = label & " ".repeat(diff)
   else:
-    result = label[0 ..^ -diff] # TODO: Ellipsis?
+    result = label[0 ..< ^(-diff)] # TODO: Ellipsis?
 
 proc draw*(nb: NimBox, lb: ListBox, y: int) =
   ## Draws a list box in the middle of the screen starting at location y on
