@@ -98,6 +98,10 @@ proc parsePacket*(data: string): Packet =
   littleEndian16(addr result.header.durationID, addr data[offset])
   offset.inc(2)
 
+  # TODO: use littleEndian for everything, otherwise big-endian machines will
+  #       fail. Unlike some internet protocols the 802.11 protocol uses
+  #       little-endian.
+
   # Address1
   copyMem(addr result.header.address1, addr data[offset], 6)
   offset.inc(6)
@@ -133,8 +137,10 @@ proc parsePacket*(data: string): Packet =
 
   # Parse HT Control Field for management frames.
   if frameType == Management: #or is QoS frame, TODO
-    littleEndian32(addr result.header.htControl, addr data[offset])
-    offset.inc(2)
+    let subtype = result.header.frameControl.getManagementSubtype()
+    if subtype notin {Deauthentication}: # TODO: likely not 100% correct
+      littleEndian32(addr result.header.htControl, addr data[offset])
+      offset.inc(2)
 
   # Handle frame body
   case frameType
@@ -191,6 +197,35 @@ proc getSSID*(packet: Packet): Option[string] =
   if length <= 0: return none(string)
   result = some[string](packet.body[12 ..< 12+length])
 
+proc initDeauthenticationPacket(a1, a2, a3: MACAddress): Packet =
+  result.header.frameControl = 0x00C0.FrameControl
+  result.header.durationID = 0x013A # TODO: Try other values.
+  result.header.address1 = a1
+  result.header.address2 = a2
+  result.header.address3 = a3
+  result.header.sequenceControl = 0
+
+  result.body = "\x07\x00"
+
+proc serialize*(packet: Packet): string =
+  var packet = packet
+  result = ""
+  case packet.header.frameControl.getType()
+  of Management:
+    let subtype = packet.header.frameControl.getManagementSubtype()
+    case subtype
+    of Deauthentication:
+      result.setLen(30)
+      copyMem(addr result[0], addr packet, 24)
+      copyMem(addr result[24], addr packet.body[0], 2)
+      var fcs = crc32(result[0 ..< ^4])
+      copyMem(addr result[26], addr fcs, 4)
+    else:
+      raise newException(ValueError, "Cannot serialize this packet subtype: " &
+                         $subtype)
+  else:
+    raise newException(ValueError, "Cannot serialize this packet type")
+
 when isMainModule:
   import radiotap
   block test1:
@@ -229,3 +264,18 @@ when isMainModule:
 
     doAssertRaises(ValueError):
       let p = parsePacket(radiotap.data)
+
+  block deauthTest:
+    const data = "\xC0\x00\x3A\x01\xCC\xCC\xCC\xCC\xCC\xCC\xBB\xBB\xBB\xBB" &
+      "\xBB\xBB\xBB\xBB\xBB\xBB\xBB\xBB\x00\x00\x07\x00\xA9\x74\xD8\xC1"
+
+    let p = parsePacket(data)
+    doAssert p.header.frameControl.getType() == Management
+    doAssert p.header.frameControl.getManagementSubType() == Deauthentication
+
+    let p2 = initDeauthenticationPacket(
+      [0xCC'u8, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC].MACAddress,
+      [0xBB'u8, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB].MACAddress,
+      [0xBB'u8, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB].MACAddress
+    )
+    doAssert data == p2.serialize()
