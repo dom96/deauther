@@ -197,12 +197,20 @@ proc getSSID*(packet: Packet): Option[string] =
   if length <= 0: return none(string)
   result = some[string](packet.body[12 ..< 12+length])
 
-proc initDeauthenticationPacket(a1, a2, a3: MACAddress): Packet =
+proc parseMacAddress*(m: string): MACAddress =
+  let bytes = m.split(':')
+  assert bytes.len == 6
+  var res: array[6, uint8]
+  for i in 0 ..< 6:
+    res[i] = bytes[i].parseHexInt().uint8
+  return res.MACAddress
+
+proc initDeauthenticationPacket*(a1, a2, a3: string): Packet =
   result.header.frameControl = 0x00C0.FrameControl
   result.header.durationID = 0x013A # TODO: Try other values.
-  result.header.address1 = a1
-  result.header.address2 = a2
-  result.header.address3 = a3
+  result.header.address1 = a1.parseMacAddress
+  result.header.address2 = a2.parseMacAddress
+  result.header.address3 = a3.parseMacAddress
   result.header.sequenceControl = 0
 
   result.body = "\x07\x00"
@@ -225,6 +233,7 @@ proc serialize*(packet: Packet): string =
                          $subtype)
   else:
     raise newException(ValueError, "Cannot serialize this packet type")
+
 
 when isMainModule:
   import radiotap
