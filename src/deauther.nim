@@ -56,6 +56,15 @@ proc writePacket(p: AsyncPcap, packet: Packet): Future[void] =
           addr packetData[0], packetData.len)
   return p.writePacket(radiotapData)
 
+type
+  MACStats = tuple[tx, rx: int, ch: CWChannel, rssi, deauths: int]
+
+proc getInit(table: var OrderedTable[string, MACStats],
+             key: string): var MACStats =
+  if key notin table:
+    table[key] = (0, 0, nil, 0, 0).MACStats
+  return table[key]
+
 proc gatherMacs(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
   let wif = wfc.getInterface()
@@ -79,7 +88,7 @@ proc gatherMacs(deauther: Deauther) {.async.} =
   # Set up storage for MAC addresses.
   var macs = initOrderedTable[
     string,
-    tuple[tx, rx: int, ch: CWChannel, rssi: int]
+    MACStats
   ]()
   while deauther.current == PacketSniffing:
     for bssid, network in accessPoints:
@@ -109,24 +118,27 @@ proc gatherMacs(deauther: Deauther) {.async.} =
             debug("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
             continue
 
-          if $packet.header.address1 notin macs:
-            macs[$packet.header.address1] = (0, 0, nil, 0)
-
-          if $packet.header.address2 notin macs:
-            macs[$packet.header.address2] = (0, 0, nil, 0)
-
-          macs[$packet.header.address1].rx.inc()
-          macs[$packet.header.address1].ch = network.wlanChannel
-          macs[$packet.header.address1].rssi = radiotap.antennaSignal.int
-          macs[$packet.header.address2].tx.inc()
-          macs[$packet.header.address2].ch = network.wlanChannel
-          macs[$packet.header.address2].rssi = radiotap.antennaSignal.int
+          macs.getInit($packet.header.address1).rx.inc()
+          macs.getInit($packet.header.address1).ch = network.wlanChannel
+          macs.getInit($packet.header.address1).rssi =
+            radiotap.antennaSignal.int
+          macs.getInit($packet.header.address2).tx.inc()
+          macs.getInit($packet.header.address2).ch = network.wlanChannel
+          macs.getInit($packet.header.address2).rssi =
+            radiotap.antennaSignal.int
 
       if deauther.deauthTarget.isSome:
+        # TODO: Only deauth if last packet from target was sent to this BSSID.
         let target = deauther.deauthTarget.get()
         info("Deauthing ", target)
         let packet = initDeauthenticationPacket(target, bssid, bssid)
         await p.writePacket(packet)
+        macs.getInit(target).deauths.inc()
+        macs.getInit(bssid).deauths.inc()
+      else:
+        # Reset counters when deauthing is stopped.
+        for key, value in macs:
+          macs[key].deauths = 0
 
     # Update UI
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
@@ -135,7 +147,8 @@ proc gatherMacs(deauther: Deauther) {.async.} =
       if key in ["FF:FF:FF:FF:FF:FF", "0:0:0:0:0:0"]: continue
 
       let value = @[
-        key, $value.tx, $value.rx, $value.ch.channelNumber, $value.rssi
+        key, $value.tx, $value.rx, $value.ch.channelNumber, $value.rssi,
+        $value.deauths
       ]
 
       if key in accessPoints:
@@ -176,7 +189,7 @@ proc newDeauther(): Deauther =
     currentSSID: "",
     macsBox: newListBox(
       50, 20,
-      initListBoxData(@["MAC", "Tx", "Rx", "Ch", "📶"])
+      initListBoxData(@["MAC", "Tx", "Rx", "Ch", "📶", "D"])
     ),
     ssidBox: newListBox(
       80, 20,
