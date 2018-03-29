@@ -268,9 +268,7 @@ proc onSpace(deauther: Deauther) =
   else:
     discard
 
-when isMainModule:
-  let deauther = newDeauther()
-  defer: deauther.nb.shutdown()
+proc run(deauther: Deauther) =
 
   # Set up UI elements.
   deauther.logger = newListBoxLogger()
@@ -323,3 +321,13 @@ when isMainModule:
             lb.onUp()
         else: discard
       else: discard
+
+when isMainModule:
+  let deauther = newDeauther()
+
+  try:
+    deauther.run()
+    deauther.nb.shutdown()
+  except:
+    deauther.nb.shutdown()
+    raise
