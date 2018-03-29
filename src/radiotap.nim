@@ -23,6 +23,7 @@ type
     xchannel*: tuple[flags: uint32, freq: uint16, channel, maxPower: uint8]
     mpdu*: tuple[refNumber: uint32, flags: uint16, crc, reserver: uint8]
     vht*: VHT
+    mcs*: tuple[known, flags, mcs: uint8]
     data*: string ## The non-radiotap data.
 
   VHT* = object
@@ -98,6 +99,15 @@ proc parseRadiotap*(packet: string): Radiotap =
         # http://www.radiotap.org/fields/XChannel.html
         littleEndian64(addr result.xchannel, addr p[offset])
         offset.inc(8)
+      of 19:
+        # MCS
+        # http://www.radiotap.org/fields/MCS.html
+        copyMem(addr result.mcs.known, addr p[offset], 1)
+        offset.inc(1)
+        copyMem(addr result.mcs.flags, addr p[offset], 1)
+        offset.inc(1)
+        copyMem(addr result.mcs.mcs, addr p[offset], 1)
+        offset.inc(1)
       of 20:
         # A-MPDU
         # http://www.radiotap.org/fields/A-MPDU%20status.html
