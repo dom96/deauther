@@ -20,6 +20,7 @@ type
     messagesOverlay: bool
     logger: ListBoxLogger
     deauthTarget: Option[string] ## MAC address we are targeting.
+    singleDeauthMode: bool
 
 proc getPacket(pcap: AsyncPcap,
                deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
@@ -135,10 +136,9 @@ proc gatherMacs(deauther: Deauther) {.async.} =
         await p.writePacket(packet)
         macs.getInit(target).deauths.inc()
         macs.getInit(bssid).deauths.inc()
-      else:
-        # Reset counters when deauthing is stopped.
-        for key, value in macs:
-          macs[key].deauths = 0
+
+        if deauther.singleDeauthMode:
+          deauther.deauthTarget = none(string)
 
     # Update UI
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
@@ -221,7 +221,6 @@ proc draw(deauther: Deauther) =
     controls =
       @({ "1": "SSID", "2": "Scan"}) & controls
   of SelectSSID:
-
     deauther.nb.draw(deauther.ssidBox, 3)
   of PacketSniffing:
     let target = deauther.deauthTarget
@@ -229,6 +228,8 @@ proc draw(deauther: Deauther) =
       "CRC check fails": $deauther.crcFails,
       "Status":
         if target.isSome(): "Deauthing " & target.get() else: "Scanning",
+      "Mode":
+        if deauther.singleDeauthMode: "Manual" else: "Auto"
     })
 
     if target.isSome():
@@ -240,6 +241,8 @@ proc draw(deauther: Deauther) =
     else:
       controls =
         @({ "Enter": "Deauth"}) & controls
+
+    controls &= @({ "Tab": "Change mode" })
 
     # Draw list box.
     deauther.nb.draw(deauther.macsBox, 3)
@@ -268,8 +271,14 @@ proc onSpace(deauther: Deauther) =
   else:
     discard
 
-proc run(deauther: Deauther) =
+proc onTab(deauther: Deauther) =
+  case deauther.current
+  of PacketSniffing:
+    deauther.singleDeauthMode = not deauther.singleDeauthMode
+  else:
+    discard
 
+proc run(deauther: Deauther) =
   # Set up UI elements.
   deauther.logger = newListBoxLogger()
   deauther.logger.levelThreshold = lvlInfo
@@ -298,6 +307,8 @@ proc run(deauther: Deauther) =
           deauther.onEnter()
         of Symbol.Space:
           deauther.onSpace()
+        of Symbol.Tab:
+          deauther.onTab()
         of Symbol.Character:
           case evt.ch
           of 'q': break
