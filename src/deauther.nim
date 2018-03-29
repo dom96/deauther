@@ -58,12 +58,16 @@ proc writePacket(p: AsyncPcap, packet: Packet): Future[void] =
   return p.writePacket(radiotapData)
 
 type
-  MACStats = tuple[tx, rx: int, ch: CWChannel, rssi, deauths: int]
+  MACStats = tuple
+    tx, rx: int
+    ch: CWChannel
+    rssi, deauths: int
+    lastPacketFrom: string ## MAC address where the last packet was seen from
 
 proc getInit(table: var OrderedTable[string, MACStats],
              key: string): var MACStats =
   if key notin table:
-    table[key] = (0, 0, nil, 0, 0).MACStats
+    table[key] = (0, 0, nil, 0, 0, "").MACStats
   return table[key]
 
 proc gatherMacs(deauther: Deauther) {.async.} =
@@ -107,38 +111,41 @@ proc gatherMacs(deauther: Deauther) {.async.} =
           error("Failed ", packetFut.error.msg)
         else:
           let (radiotap, packet) = packetFut.read.get()
+          let addr1 = $packet.header.address1
+          let addr2 = $packet.header.address2
           # How are address fields used?
           # http://80211notes.blogspot.co.uk/2013/09/understanding-address-fields-in-80211.html
 
           # Only care about packets transmitted to or from current network...
           # TODO: Compare BSSID in a better way, this toUpper/toLower conversion
           # is pretty error prone. Comparing numbers would be better.
-          if bssid notin [
-              $packet.header.address1, $packet.header.address2
-            ]:
-            debug("Skipping ", $packet.header.address1, "<-", $packet.header.address2)
+          if bssid notin [addr1, addr2]:
+            debug("Skipping ", addr1, "<-", addr2)
             continue
 
-          macs.getInit($packet.header.address1).rx.inc()
-          macs.getInit($packet.header.address1).ch = network.wlanChannel
-          macs.getInit($packet.header.address1).rssi =
+          macs.getInit(addr1).rx.inc()
+          macs.getInit(addr1).ch = network.wlanChannel
+          macs.getInit(addr1).rssi =
             radiotap.antennaSignal.int
-          macs.getInit($packet.header.address2).tx.inc()
-          macs.getInit($packet.header.address2).ch = network.wlanChannel
-          macs.getInit($packet.header.address2).rssi =
+          macs.getInit(addr1).lastPacketFrom = addr2
+          macs.getInit(addr2).tx.inc()
+          macs.getInit(addr2).ch = network.wlanChannel
+          macs.getInit(addr2).rssi =
             radiotap.antennaSignal.int
+          macs.getInit(addr2).lastPacketFrom = addr1
 
       if deauther.deauthTarget.isSome:
-        # TODO: Only deauth if last packet from target was sent to this BSSID.
         let target = deauther.deauthTarget.get()
-        info("Deauthing ", target)
-        let packet = initDeauthenticationPacket(target, bssid, bssid)
-        await p.writePacket(packet)
-        macs.getInit(target).deauths.inc()
-        macs.getInit(bssid).deauths.inc()
+        # Only deauth if last packet from target was sent to current BSSID.
+        if macs.getInit(target).lastPacketFrom == bssid:
+          info("Deauthing ", target)
+          let packet = initDeauthenticationPacket(target, bssid, bssid)
+          await p.writePacket(packet)
+          macs.getInit(target).deauths.inc()
+          macs.getInit(bssid).deauths.inc()
 
-        if deauther.singleDeauthMode:
-          deauther.deauthTarget = none(string)
+          if deauther.singleDeauthMode:
+            deauther.deauthTarget = none(string)
 
     # Update UI
     let previousSelection = deauther.macsBox.getSelectedRow()
