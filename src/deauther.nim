@@ -141,6 +141,7 @@ proc gatherMacs(deauther: Deauther) {.async.} =
           deauther.deauthTarget = none(string)
 
     # Update UI
+    let previousSelection = deauther.macsBox.getSelectedRow()
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
     deauther.macsBox.clear()
     for key, value in macs:
@@ -157,6 +158,10 @@ proc gatherMacs(deauther: Deauther) {.async.} =
         deauther.macsBox.add(value, fg=clrRed)
       else:
         deauther.macsBox.add(value)
+
+    # Keep selection constant
+    if previousSelection.isSome():
+      deauther.macsBox.select(previousSelection.get()[0], col=0)
 
     await sleepAsync(200)
 
@@ -260,7 +265,7 @@ proc onEnter(deauther: Deauther) =
   case deauther.current
   of PacketSniffing:
     let row = deauther.macsBox.getSelectedRow()
-    deauther.deauthTarget = some(row[0])
+    deauther.deauthTarget = row.map(r => r[0])
   else:
     discard
 

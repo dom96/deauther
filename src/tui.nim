@@ -1,4 +1,4 @@
-import strutils, os, sequtils, math, unicode, future, algorithm, future
+import strutils, os, sequtils, math, unicode, future, algorithm, future, options
 
 import nimbox
 
@@ -146,12 +146,27 @@ proc onUp*(lb: ListBox) =
   scroll(lb)
 
 proc select*(lb: ListBox, index: int) =
+  assert index >= 0 and index < lb.data.values.len
   lb.selectedIndex = index
 
   scroll(lb)
 
-proc getSelectedRow*(lb: ListBox): seq[string] =
-  return lb.data.values[lb.selectedIndex].map(x => x.text)
+proc select*(lb: ListBox, val: string, col: int) =
+  ## Searches for the specified value in the specified column. If it is found
+  ## then it selects it.
+  for i in 0..< lb.data.values.len:
+    if lb.data.values[i][col].text == val:
+      lb.selectedIndex = i
+      break
+
+  scroll(lb)
+
+proc getSelectedRow*(lb: ListBox): Option[seq[string]] =
+  if lb.data.values.len == 0:
+    # Return none when there are no values. If selectedIndex points to an
+    # incorrect index then that should still raise.
+    return none(seq[string])
+  return some(lb.data.values[lb.selectedIndex].map(x => x.text))
 
 proc calcSizes(lb: ListBox): seq[int] =
   result = @[]
