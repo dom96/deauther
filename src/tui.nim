@@ -184,8 +184,12 @@ proc calcSizes(lb: ListBox): seq[int] =
     # Just resize the first column for now and hope for the best.
     result[0] = max(0, result[0] - diff)
   elif diff < 0:
-    # Increase the size so that the full list box is filled.
-    result[0] = result[0] + -diff
+    # Increase the size of all columns so that the full listbox is filled.
+    let share = -diff div len(result)
+    for i in 0 ..< result.len:
+      result[i] += share
+
+    result[0] += (-diff) - (share * len(result))
 
 proc pad(label: string, len: int, centre: bool): string =
   let diff = len-label.len

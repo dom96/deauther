@@ -157,7 +157,7 @@ proc parsePacket*(data: string): Packet =
 
 proc `$`*(mac: MACAddress): string =
   let m = array[6, uint8](mac)
-  return fmt"{m[0]:X}:{m[1]:X}:{m[2]:X}:{m[3]:X}:{m[4]:X}:{m[5]:X}"
+  return fmt"{m[0].toHex()}:{m[1].toHex()}:{m[2].toHex()}:{m[3].toHex()}:{m[4].toHex()}:{m[5].toHex()}"
 
 proc toBin(x: uint16, len: Positive): string = toBin(x.BiggestInt, len)
 proc `$`*(fc: FrameControl): string =

@@ -1,9 +1,10 @@
 import strutils, os, options, tables, times, strformat, asyncdispatch, logging
-import algorithm, future
+import algorithm, future, httpclient
 
 import pcap/[wrapper, async]
 import corewlan
 import nimbox
+import oui
 
 import radiotap, packet, tui, listboxlogger
 
@@ -21,6 +22,7 @@ type
     logger: ListBoxLogger
     deauthTarget: Option[string] ## MAC address we are targeting.
     singleDeauthMode: bool
+    ouiData: OuiData
 
 proc getPacket(pcap: AsyncPcap,
                deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
@@ -152,11 +154,16 @@ proc gatherMacs(deauther: Deauther) {.async.} =
     macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
     deauther.macsBox.clear()
     for key, value in macs:
-      if key in ["FF:FF:FF:FF:FF:FF", "0:0:0:0:0:0"]: continue
+      if key in ["FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00"]: continue
+
+      let ouiOctets = key[0 ..< 8]
+      let vendor =
+        if ouiOctets in deauther.ouiData: deauther.ouiData[ouiOctets].company
+        else: ""
 
       let value = @[
         key, $value.tx, $value.rx, $value.ch.channelNumber, $value.rssi,
-        $value.deauths
+        $value.deauths, vendor
       ]
 
       if key in accessPoints:
@@ -195,18 +202,24 @@ proc selectSSID(deauther: Deauther) {.async.} =
     await sleepAsync(1000)
 
 proc newDeauther(): Deauther =
+  if not fileExists("oui.txt"):
+    echo("No oui.txt found, downloading...")
+    var client = newHttpClient()
+    client.downloadFile("http://standards-oui.ieee.org/oui/oui.txt", "oui.txt")
+
   result = Deauther(
     nb: newNimbox(),
     current: Menu,
     currentSSID: "",
     macsBox: newListBox(
-      50, 20,
-      initListBoxData(@["MAC", "Tx", "Rx", "Ch", "📶", "D"])
+      70, 20,
+      initListBoxData(@["MAC", "Tx", "Rx", "Ch", "📶", "D", "Vendor"])
     ),
     ssidBox: newListBox(
       80, 20,
       initListBoxData(@["SSID", "BSSID", "Channel", "📶"])
-    )
+    ),
+    ouiData: parseOui("oui.txt")
   )
 
   let wfc = sharedWiFiClient()
