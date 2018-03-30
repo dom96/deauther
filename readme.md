@@ -6,7 +6,6 @@ user friendly.
 
 <img width="800" alt="deauther CLI" src="https://user-images.githubusercontent.com/246651/38156175-f94137c4-3473-11e8-997b-9e2a34177f31.png">
 
-
 ## About this project
 
 The 802.11 WiFi standard which prescribes almost all of our communications
@@ -55,3 +54,10 @@ direction I was initially walking after reconnection.
 As for Gwent, the consistent disconnections caused it to pop up a dialog box
 with a "Connection lost... reconnecting..." message every couple of seconds.
 This made the game really annoying to play.
+
+## Disclaimer
+
+I repeat: this project was made entirely for educational purposes. Use it only
+against your own networks and devices.
+Check the legal regulations in your country before using it. I don't take
+any responsibility for what you do with this program.
