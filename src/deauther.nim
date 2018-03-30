@@ -23,6 +23,9 @@ type
     deauthTarget: Option[string] ## MAC address we are targeting.
     singleDeauthMode: bool
     ouiData: OuiData
+    refreshRate: int ## How long to wait before each packet refresh.
+    channelSwitchRate: int ## How long to listen for packets on each channel.
+    currentChannel: Option[CWChannel]
 
 proc getPacket(pcap: AsyncPcap,
                deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
@@ -35,7 +38,7 @@ proc getPacket(pcap: AsyncPcap,
   let packet = parsePacket(radiotap.data)
   if packet.calculatedFCS != packet.receivedFCS:
     deauther.crcFails.inc()
-    return await getPacket(pcap, deauther)
+    return none((Radiotap, Packet))
   return some((radiotap, packet))
 
 proc monitor(): AsyncPcap =
@@ -72,6 +75,10 @@ proc getInit(table: var OrderedTable[string, MACStats],
     table[key] = (0, 0, nil, 0, 0, "").MACStats
   return table[key]
 
+proc `$`(chan: CWChannel): string =
+  return fmt"{chan.channelNumber} ({($chan.channelBand)[14 .. ^1]}, " &
+         fmt"{($chan.channelWidth)[15 .. ^1]})"
+
 proc gatherMacs(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
   let wif = wfc.getInterface()
@@ -100,17 +107,20 @@ proc gatherMacs(deauther: Deauther) {.async.} =
   while deauther.current == PacketSniffing:
     for bssid, network in accessPoints:
       # Switch to network's channel.
-      info("Switching to ", network.wlanChannel.channelNumber)
+      info("Switching to ", network.wlanChannel)
       info("Looking for packets from/to ", bssid)
       wif.setWLANChannel(network.wlanChannel)
+      deauther.currentChannel = some(network.wlanChannel)
 
-      info("Reading packets for 300ms...")
+      info(fmt"Reading packets for {deauther.channelSwitchRate/1000}s...")
       let startTime = epochTime()
-      while epochTime() - startTime < 0.3:
+      while epochTime() - startTime < deauther.channelSwitchRate/1000:
         let packetFut = getPacket(p, deauther)
         yield packetFut
         if packetFut.failed:
           error("Failed ", packetFut.error.msg)
+        elif packetFut.read.isNone():
+          discard
         else:
           let (radiotap, packet) = packetFut.read.get()
           let addr1 = $packet.header.address1
@@ -177,7 +187,8 @@ proc gatherMacs(deauther: Deauther) {.async.} =
     if previousSelection.isSome():
       deauther.macsBox.select(previousSelection.get()[0], col=0)
 
-    await sleepAsync(200)
+    deauther.currentChannel = none(CWChannel)
+    await sleepAsync(deauther.refreshRate)
 
 proc selectSSID(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
@@ -219,7 +230,9 @@ proc newDeauther(): Deauther =
       80, 20,
       initListBoxData(@["SSID", "BSSID", "Channel", "📶"])
     ),
-    ouiData: parseOui("oui.txt")
+    ouiData: parseOui("oui.txt"),
+    refreshRate: 200,
+    channelSwitchRate: 300
   )
 
   let wfc = sharedWiFiClient()
@@ -249,12 +262,17 @@ proc draw(deauther: Deauther) =
     deauther.nb.draw(deauther.ssidBox, 3)
   of PacketSniffing:
     let target = deauther.deauthTarget
+    let chan = deauther.currentChannel
     stats &= @({
       "CRC check fails": $deauther.crcFails,
-      "Status":
-        if target.isSome(): "Deauthing " & target.get() else: "Scanning",
       "Mode":
-        if deauther.singleDeauthMode: "Manual" else: "Auto"
+        if deauther.singleDeauthMode: "Manual" else: "Auto",
+      "Refresh rate": fmt"{deauther.refreshRate}ms",
+      "Channel switch rate": fmt"{deauther.channelSwitchRate}ms",
+      "Status":
+        if target.isSome(): "Deauthing " & target.get()
+        elif chan.isSome(): "Scanning " & $chan.get()
+        else: "Idle"
     })
 
     if target.isSome():
@@ -334,6 +352,14 @@ proc run(deauther: Deauther) =
           deauther.onSpace()
         of Symbol.Tab:
           deauther.onTab()
+        of Symbol.F5:
+          deauther.refreshRate -= 10
+        of Symbol.F6:
+          deauther.refreshRate += 10
+        of Symbol.F7:
+          deauther.channelSwitchRate -= 10
+        of Symbol.F8:
+          deauther.channelSwitchRate += 10
         of Symbol.Character:
           case evt.ch
           of 'q': break
