@@ -25,7 +25,8 @@ type
     ouiData: OuiData
     refreshRate: int ## How long to wait before each packet refresh.
     channelSwitchRate: int ## How long to listen for packets on each channel.
-    currentChannel: Option[CWChannel]
+    currentChannel: Option[CWChannel] ## Current channel being scanned.
+    apCount: int ## Number of access points with the selected SSID being scanned.
 
 proc getPacket(pcap: AsyncPcap,
                deauther: Deauther): Future[Option[(Radiotap, Packet)]] {.async.} =
@@ -95,9 +96,11 @@ proc gatherMacs(deauther: Deauther) {.async.} =
   for network in items(CWNetwork, networks.allObjects()):
     let ssid = $network.ssid.toCString()
 
-    if ssid == deauther.currentSSID and network.rssiValue > -70:
+    if ssid == deauther.currentSSID:# and network.rssiValue > -70:
       let bssid = ($network.bssid.toCString()).toUpperAscii()
       accessPoints[bssid] = network
+
+  deauther.apCount = accessPoints.len
 
   # Set up storage for MAC addresses.
   var macs = initOrderedTable[
@@ -246,10 +249,7 @@ proc draw(deauther: Deauther) =
   # Draw title header
   deauther.nb.drawTitle("Deauther")
 
-  var controls = @[
-    ("BkSpc", "Main Menu"),
-    ("Q", "Quit"),
-  ]
+  var controls: seq[(string, string)] = @[]
   var stats = @[
     ("SSID", deauther.currentSSID)
   ]
@@ -264,7 +264,8 @@ proc draw(deauther: Deauther) =
     let target = deauther.deauthTarget
     let chan = deauther.currentChannel
     stats &= @({
-      "CRC check fails": $deauther.crcFails,
+      "APs": $deauther.apCount,
+      "CRC fails": $deauther.crcFails,
       "Mode":
         if deauther.singleDeauthMode: "Manual" else: "Auto",
       "Refresh rate": fmt"{deauther.refreshRate}ms",
@@ -285,13 +286,18 @@ proc draw(deauther: Deauther) =
       controls =
         @({ "Enter": "Deauth"}) & controls
 
-    controls &= @({ "Tab": "Change mode" })
+    controls &= @({
+      "Tab": "Change mode",
+      "F5/F6": "+/- refresh",
+      "F7/F8": "+/- chan"
+    })
 
     # Draw list box.
     deauther.nb.draw(deauther.macsBox, 3)
 
   deauther.nb.drawStats(stats)
 
+  controls &= @[("BkSpc", "Main Menu"), ("Q", "Quit")]
   deauther.nb.drawControls(controls)
 
   if deauther.messagesOverlay:
@@ -304,6 +310,8 @@ proc onEnter(deauther: Deauther) =
   of PacketSniffing:
     let row = deauther.macsBox.getSelectedRow()
     deauther.deauthTarget = row.map(r => r[0])
+  of SelectSSID:
+    deauther.currentSSID = deauther.ssidBox.getSelectedRow().get()[0]
   else:
     discard
 
