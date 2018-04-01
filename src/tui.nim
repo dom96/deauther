@@ -93,6 +93,8 @@ proc add*(lb: ListBox, data: seq[string]) =
 
 proc clear*(lb: ListBox) =
   lb.data.values = @[]
+  lb.selectedIndex = 0
+  lb.firstItemInView = 0
 
 proc sort*(lb: ListBox, cmp: proc (x, y: seq[string]): int) =
   lb.data.values.sort((x, y) => (
@@ -142,7 +144,7 @@ proc onUp*(lb: ListBox) =
   lb.selectedIndex.dec
 
   if lb.selectedIndex < 0:
-    lb.selectedIndex = lb.data.values.len-1
+    lb.selectedIndex = max(0, lb.data.values.len-1)
 
   scroll(lb)
 
@@ -163,6 +165,7 @@ proc select*(lb: ListBox, val: string, col: int) =
   scroll(lb)
 
 proc getSelectedRow*(lb: ListBox): Option[seq[string]] =
+  assert lb.selectedIndex >= 0
   if lb.data.values.len == 0:
     # Return none when there are no values. If selectedIndex points to an
     # incorrect index then that should still raise.

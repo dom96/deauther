@@ -219,6 +219,7 @@ proc selectSSID(deauther: Deauther) {.async.} =
   let wif = wfc.getInterface()
 
   while deauther.current == SelectSSID:
+    let previousSelection = deauther.ssidBox.getSelectedRow()
     deauther.ssidBox.clear()
 
     # In case we ever want to probe manually. This explains how the OS does it
@@ -233,6 +234,9 @@ proc selectSSID(deauther: Deauther) {.async.} =
       ])
 
     deauther.ssidBox.sort((x, y) => cmp(x[3], y[3]))
+    # Keep selection constant
+    if previousSelection.isSome():
+      deauther.ssidBox.select(previousSelection.get()[0], col=0)
 
     await sleepAsync(1000)
 
