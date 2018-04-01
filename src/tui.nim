@@ -1,4 +1,5 @@
 import strutils, os, sequtils, math, unicode, future, algorithm, future, options
+import strformat
 
 import nimbox
 
@@ -166,6 +167,8 @@ proc getSelectedRow*(lb: ListBox): Option[seq[string]] =
     # Return none when there are no values. If selectedIndex points to an
     # incorrect index then that should still raise.
     return none(seq[string])
+  assert lb.selectedIndex < lb.data.values.len,
+         fmt"{lb.selectedIndex} {lb.data.values.len}"
   return some(lb.data.values[lb.selectedIndex].map(x => x.text))
 
 proc calcSizes(lb: ListBox): seq[int] =
@@ -258,11 +261,13 @@ proc draw*(nb: NimBox, lb: ListBox, y: int) =
 
     var curX = x+1
     for colI, size in pairs(columnSizes):
-      let label = row[colI].text.pad(size, false)
+      var text = row[colI].text
 
       let fgColor =
         if rowI == lb.selectedIndex:
           lb.style.selectionFg
+        elif text.isNil():
+          clrRed
         else:
           row[colI].fg
       let bgColor =
@@ -270,6 +275,12 @@ proc draw*(nb: NimBox, lb: ListBox, y: int) =
           lb.style.selectionBg
         else:
           row[colI].bg
+
+      if text.isNil():
+        text = "nil"
+
+      let label = text.pad(size, false)
+
       nb.print(curX, curY, label, fg=fgColor, bg=bgColor)
       curX.inc label.len
 
