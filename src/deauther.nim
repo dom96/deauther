@@ -1,5 +1,5 @@
 import strutils, os, options, tables, times, strformat, asyncdispatch, logging
-import algorithm, future, httpclient
+import algorithm, sugar, httpclient
 
 import pcap/[wrapper, async]
 import corewlan
