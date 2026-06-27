@@ -269,7 +269,7 @@ proc draw*(nb: NimBox, lb: ListBox, y: int) =
       let fgColor =
         if rowI == lb.selectedIndex:
           lb.style.selectionFg
-        elif text.isNil():
+        elif text.len == 0:
           clrRed
         else:
           row[colI].fg
@@ -279,7 +279,7 @@ proc draw*(nb: NimBox, lb: ListBox, y: int) =
         else:
           row[colI].bg
 
-      if text.isNil():
+      if text.len == 0:
         text = "nil"
 
       let label = text.pad(size, false)
