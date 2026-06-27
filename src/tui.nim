@@ -1,4 +1,4 @@
-import strutils, os, sequtils, math, unicode, future, algorithm, future, options
+import strutils, os, sequtils, math, unicode, sugar, algorithm, options
 import strformat
 
 import nimbox
